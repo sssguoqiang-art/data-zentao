@@ -36,6 +36,7 @@ from .reports import (
     render_weekly_summary_report,
 )
 from .router import answer_question
+from .update_check import check_update, maybe_print_update_notice, update_notice
 
 
 REQUIRED_SCHEMA = {
@@ -186,6 +187,28 @@ def cmd_check(_: argparse.Namespace) -> int:
     print(f"数据库：{data['database']}")
     print(f"基础表数量：{data['tables']}")
     print(f"用户数量：{data['users']}")
+    return 0
+
+
+def cmd_update_check(args: argparse.Namespace) -> int:
+    data = check_update(fetch=not args.no_fetch)
+    if args.format == "json":
+        print(to_json(data))
+        return 0
+
+    if not data.get("checked"):
+        reason = data.get("reason", "unknown")
+        print(f"没有完成 Git 更新检查：{reason}")
+        return 0
+
+    notice = update_notice(data)
+    if notice:
+        print(notice.strip())
+    else:
+        print(
+            "data-zentao 已是最新版本。"
+            f"本地 {data.get('local')}，远端 {data.get('remote')}。"
+        )
     return 0
 
 
@@ -683,6 +706,11 @@ def build_parser() -> argparse.ArgumentParser:
     check = subparsers.add_parser("check", help="检查数据库连接。")
     check.set_defaults(func=cmd_check)
 
+    update_check = subparsers.add_parser("update-check", help="检查 Git 远端是否有新版本。")
+    update_check.add_argument("--no-fetch", action="store_true", help="只比较本地已有的远端引用，不执行 git fetch。")
+    update_check.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    update_check.set_defaults(func=cmd_update_check)
+
     doctor = subparsers.add_parser("doctor", help="安装后自检数据库结构和核心能力。")
     add_common_date_arg(doctor)
     add_common_project_args(doctor)
@@ -831,6 +859,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command != "update-check":
+            maybe_print_update_notice()
         return int(args.func(args))
     except Exception as exc:
         print(f"错误：{exc}", file=sys.stderr)

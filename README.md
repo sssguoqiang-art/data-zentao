@@ -53,6 +53,7 @@ data-zentao/
     ├── repository.py       禅道数据查询工具
     ├── reports.py          报告渲染
     ├── router.py           常见问题快捷路由
+    ├── update_check.py     Git 更新提醒
     └── formatting.py       Markdown / JSON 输出工具
 ```
 
@@ -143,6 +144,33 @@ data-zentao doctor
 这个命令会检查数据库连接、核心表字段、当前版本定位，以及需求、任务、Bug、待办、举措、日报、周报等能力的数据通路。
 
 只要没有 `FAIL`，就代表安装和基础数据读取通过。若出现 `WARN`，通常表示当前样本数据为空，需要结合实际问题再查。
+
+---
+
+## 更新提醒
+
+后续仓库有新版本时，使用者不需要自己记得去 GitHub 看。每次运行 `data-zentao` 命令前，工具都会轻量检查远端 `origin` 是否有新提交；如果发现本地版本落后，会提示先更新。
+
+也可以手动检查：
+
+```bash
+data-zentao update-check
+```
+
+如果提示有更新，建议执行：
+
+```bash
+git pull --ff-only
+pip install -e .
+```
+
+如果本地有未提交改动，先让 Claude/Codex 帮你确认这些改动是否需要保留，再更新。
+
+如果临时不想检查更新，可以这样运行：
+
+```bash
+DATA_ZENTAO_SKIP_UPDATE_CHECK=1 data-zentao check
+```
 
 ---
 

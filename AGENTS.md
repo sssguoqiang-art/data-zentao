@@ -13,6 +13,7 @@
 
 ## 默认流程
 
+0. 每次开始处理用户问题、且准备使用本仓库能力前，先运行 `data-zentao update-check`。如果提示远端有新版本，先告诉用户“检测到 data-zentao 有更新，是否先更新？”；用户同意后再执行提示里的更新命令。
 1. 先理解用户问题要查什么对象：项目、版本、需求、任务、Bug、待办、人员、部门或报告。
 2. 如果是高频场景，优先使用封装命令，例如 `data-zentao daily-report`、`data-zentao todos`、`data-zentao platform-delay`。
 3. 如果不是高频场景，先查结构：`data-zentao schema --search 关键词` 或 `data-zentao schema --table 表名`。
@@ -31,6 +32,7 @@
 
 ```bash
 data-zentao check
+data-zentao update-check
 data-zentao doctor
 data-zentao daily-report
 data-zentao weekly-report
