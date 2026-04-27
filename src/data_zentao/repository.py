@@ -1323,8 +1323,8 @@ class ZentaoRepository:
                 """
                 SELECT
                   SUM(IF(classification IN ('1','2') AND type <> 'performance', 1, 0)) AS external_bugs,
-                  SUM(IF(classification IN ('4','5') AND type <> 'performance', 1, 0)) AS internal_bugs,
-                  SUM(IF(type = 'performance', 1, 0)) AS nonbug_bugs
+                  SUM(IF(classification IN ('4','5') AND type NOT IN ('performance','DDProblem'), 1, 0)) AS internal_bugs,
+                  SUM(IF(classification IN ('1','2') AND type = 'performance', 1, 0)) AS nonbug_bugs
                 FROM zt_bug
                 WHERE deleted = '0'
                   AND execution = %s
@@ -1349,6 +1349,62 @@ class ZentaoRepository:
                 }
             )
         return trends
+
+    def get_version_adjusted_pool_items(self, version_id: int) -> list[dict[str, Any]]:
+        version = self.db.fetch_one(
+            """
+            SELECT name
+            FROM zt_project
+            WHERE id = %s
+            """,
+            (version_id,),
+        )
+        version_token = ""
+        if version:
+            match = re.search(r"\d{4}", str(version.get("name") or ""))
+            version_token = match.group(0) if match else ""
+        adjust_filters = [
+            "src.adjustLog LIKE '%%调下版本%%'",
+        ]
+        params: list[Any] = [version_id]
+        if version_token:
+            adjust_filters.extend(
+                [
+                    "src.adjustLog LIKE %s",
+                    "src.adjustLog LIKE %s",
+                ]
+            )
+            params.extend([f"%{version_token}调整成%", f"%{version_token}调整到%"])
+        return self.db.fetch_all(
+            f"""
+            SELECT
+              p.id AS pool_id,
+              p.title,
+              p.category,
+              p.taskID,
+              t.name AS task_name,
+              t.assignedTo,
+              u.realname AS assignedName,
+              t.status AS task_status,
+              t.deadline,
+              t.finishedDate,
+              t.delayTimes,
+              src.adjustLog,
+              src.delayReason,
+              src.delayMeasure
+            FROM zt_pool p
+            JOIN zt_pool src ON src.id = p.sourceId
+            LEFT JOIN zt_task t ON t.id = p.taskID
+            LEFT JOIN zt_user u ON u.account = t.assignedTo
+            WHERE p.deleted = '0'
+              AND p.type = 0
+              AND p.pv_id = %s
+              AND p.sourceId > 0
+              AND ({" OR ".join(adjust_filters)})
+            ORDER BY p.id
+            """,
+            tuple(params),
+        )
 
     def find_departments(self, keyword: str, limit: int = 20) -> list[dict[str, Any]]:
         pattern = f"%{keyword}%"

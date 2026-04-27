@@ -41,12 +41,15 @@ def bug_classification_label(value: object) -> str:
 
 def bug_boundary_bucket(row: dict[str, Any]) -> str:
     classification = str(row.get("classification") or "0")
-    if row.get("type") == "performance":
+    bug_type = str(row.get("type") or "")
+    if classification in {"1", "2"} and bug_type == "performance":
         return "nonbug"
     if classification in {"1", "2"}:
         return "external"
     if classification == "3":
         return "ops"
+    if classification in {"4", "5"} and bug_type in {"performance", "DDProblem"}:
+        return "excluded"
     if classification in {"4", "5"}:
         return "internal"
     return "unknown"
@@ -891,6 +894,7 @@ def build_bug_boundary_payload(repo: ZentaoRepository, version_id: int) -> dict[
         "external": [row for row in bugs if bug_boundary_bucket(row) == "external"],
         "ops": [row for row in bugs if bug_boundary_bucket(row) == "ops"],
         "internal": [row for row in bugs if bug_boundary_bucket(row) == "internal"],
+        "excluded": [row for row in bugs if bug_boundary_bucket(row) == "excluded"],
         "unknown": [row for row in bugs if bug_boundary_bucket(row) == "unknown"],
     }
     return {"ok": True, "version_id": version_id, **data, "buckets": buckets}
@@ -1066,6 +1070,7 @@ def build_version_review_payload(
         "demand_summary": repo.get_version_demand_summary(version_id),
         "demands": repo.get_version_demands(version_id, limit=80),
         "bug_boundary": build_bug_boundary_payload(repo, version_id),
+        "adjusted_pool_items": repo.get_version_adjusted_pool_items(version_id),
         "trends": repo.get_version_review_trends(product_name, project_name, as_of, limit=8),
     }
 
@@ -1086,6 +1091,7 @@ def render_version_review_report(payload: dict[str, Any]) -> str:
     overdue = version_payload.get("overdue_open") or []
     finished_late = version_payload.get("finished_late") or []
     marked_delay = version_payload.get("marked_delay") or []
+    adjusted_pool_items = payload.get("adjusted_pool_items") or []
 
     version_name = str(version.get("name") or payload.get("version_id") or "未知版本")
     review_internal = [
@@ -1120,6 +1126,7 @@ def render_version_review_report(payload: dict[str, Any]) -> str:
             )
 
     high_internal = [row for row in internal if row.get("severity") in {1, 2}]
+    process_delay_rows = [*marked_delay, *adjusted_pool_items]
     bug_type_counts: dict[str, dict[str, Any]] = {}
     for row in high_internal:
         label = str(row.get("bugType") or row.get("bugTypeParent") or "原因待确认")
@@ -1346,7 +1353,7 @@ def render_version_review_report(payload: dict[str, Any]) -> str:
             "",
             "### 3.2 延期情况",
             "",
-            f"**当前版本过程延期总数：** 当前逾期未完成 {len(overdue)} 个，已完成但晚于截止 {len(finished_late)} 个，显式标记延期 {len(marked_delay)} 个。",
+            f"**当前版本过程延期总数：** {len(process_delay_rows)} 个任务，共 {sum(int(row.get('delayTimes') or 1) for row in process_delay_rows)} 次延期/调整。",
             "",
             "### 3.3 延期任务记录",
             "",
@@ -1355,14 +1362,14 @@ def render_version_review_report(payload: dict[str, Any]) -> str:
                 [
                     [
                         index,
-                        trim_text(row.get("name"), 50),
-                        trim_text(row.get("root_name"), 28),
-                        serialize(row.get("delayTimes") or ""),
-                        row.get("assignedName") or row.get("assignedTo"),
+                        trim_text(row.get("name") or row.get("task_name") or row.get("title"), 50),
+                        trim_text(row.get("root_name") or row.get("title") or row.get("category"), 28),
+                        serialize(row.get("delayTimes") or 1),
+                        row.get("assignedName") or row.get("assignedTo") or "",
                         serialize(row.get("deadline")),
-                        f"逾期 {serialize(row.get('overdue_days'))} 天" if row.get("overdue_days") else "字段标记延期",
+                        trim_text(row.get("adjustLog") or row.get("delayReason") or "字段标记延期", 34),
                     ]
-                    for index, row in enumerate((overdue + marked_delay)[:30], 1)
+                    for index, row in enumerate(process_delay_rows[:30], 1)
                 ] or [["-", "本版本没有查到延期任务记录", "-", "-", "-", "-", "-"]],
             ),
             "",
