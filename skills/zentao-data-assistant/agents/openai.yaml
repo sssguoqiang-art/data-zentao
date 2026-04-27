@@ -1,0 +1,7 @@
+interface:
+  display_name: "ZenTao Data Assistant"
+  short_description: "Query ZenTao data with verified field口径"
+  default_prompt: "Use $zentao-data-assistant to answer this ZenTao database or report question with verified data口径."
+
+policy:
+  allow_implicit_invocation: true

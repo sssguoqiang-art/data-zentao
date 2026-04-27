@@ -13,13 +13,14 @@
 
 ## 默认流程
 
-0. 每次开始处理用户问题、且准备使用本仓库能力前，先运行 `data-zentao update-check`。如果提示远端有新版本，先告诉用户“检测到 data-zentao 有更新，是否先更新？”；用户同意后再执行提示里的更新命令。
-1. 先理解用户问题要查什么对象：项目、版本、需求、任务、Bug、待办、人员、部门或报告。
-2. 如果是高频场景，优先使用封装命令，例如 `data-zentao daily-report`、`data-zentao todos`、`data-zentao platform-delay`。
-3. 如果不是高频场景，先查结构：`data-zentao schema --search 关键词` 或 `data-zentao schema --table 表名`。
-4. 再用 `data-zentao query --sql "SELECT ..."` 执行只读查询。
-5. 输出时要说明查询口径，给出结论、关键明细和风险判断。
-6. 不要把 `data-zentao` 的原始输出直接原样作为最终答案；它是数据材料，最终答案需要经过你的判断和组织。
+1. 如果当前 Codex 已安装 `$zentao-data-assistant` Skill，优先使用该 Skill；如果没有安装，先读取本仓库内 `skills/zentao-data-assistant/SKILL.md`，再按其 references 选择需要的字段口径文档。
+2. 每次开始处理用户问题、且准备使用本仓库能力前，先运行 `data-zentao update-check`。如果提示远端有新版本，先告诉用户“检测到 data-zentao 有更新，是否先更新？”；用户同意后再执行提示里的更新命令。
+3. 先理解用户问题要查什么对象：项目、版本、需求、任务、Bug、待办、人员、部门或报告。
+4. 如果是高频场景，优先使用封装命令，例如 `data-zentao daily-report`、`data-zentao todos`、`data-zentao platform-delay`。
+5. 如果不是高频场景，先查结构：`data-zentao schema --search 关键词` 或 `data-zentao schema --table 表名`。
+6. 再用 `data-zentao query --sql "SELECT ..."` 执行只读查询。
+7. 输出时要说明查询口径，给出结论、关键明细和风险判断。
+8. 不要把 `data-zentao` 的原始输出直接原样作为最终答案；它是数据材料，最终答案需要经过你的判断和组织。
 
 ## 操作约束
 
@@ -55,6 +56,8 @@ data-zentao query --format json --sql "SELECT id, name FROM zt_project LIMIT 20"
 回答字段含义或写 SQL 前，优先参考：
 
 ```text
+skills/zentao-data-assistant/SKILL.md
+skills/zentao-data-assistant/references/
 docs/数据口径.md
 ```
 

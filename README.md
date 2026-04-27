@@ -38,6 +38,10 @@ data-zentao/
 ├── CLAUDE.md               Claude Code 工作指引
 ├── docs/
 │   └── ...                  禅道字段说明和查询参考
+├── skills/
+│   └── zentao-data-assistant/
+│       ├── SKILL.md          Codex Skill：禅道数据库读取工作流
+│       └── references/       Skill 内置字段口径和报告规则
 │
 │  ── 给用户看的文件 ───────────────────────────────────────────────
 ├── README.md               本文件
@@ -81,7 +85,7 @@ data-zentao/
 ### 第一步：克隆仓库
 
 ```bash
-git clone <repo-url> data-zentao
+git clone https://github.com/sssguoqiang-art/data-zentao.git data-zentao
 cd data-zentao
 ```
 
@@ -135,7 +139,17 @@ data-zentao check
 用户数量：233
 ```
 
-### 第六步：运行完整自检
+### 第六步：开始使用或运行完整自检
+
+`check` 通过后，就可以在 Claude Code / Codex 里开始对话查询。比如：
+
+```text
+帮我查平台项目当前版本风险
+查一下 47526 这个需求单
+帮我生成今日项目报告
+```
+
+如果是第一次装到一台新电脑，建议再跑一次完整自检：
 
 ```bash
 data-zentao doctor
@@ -143,7 +157,26 @@ data-zentao doctor
 
 这个命令会检查数据库连接、核心表字段、当前版本定位，以及需求、任务、Bug、待办、举措、日报、周报等能力的数据通路。
 
-只要没有 `FAIL`，就代表安装和基础数据读取通过。若出现 `WARN`，通常表示当前样本数据为空，需要结合实际问题再查。
+完整自检会真实访问多张表和多类报告，可能耗时几分钟。只要没有 `FAIL`，就代表安装和基础数据读取通过。若出现 `WARN`，通常表示当前样本数据为空，需要结合实际问题再查。
+
+### 第七步：安装 Codex Skill（推荐）
+
+如果使用 Codex，建议把仓库内置的禅道 Skill 安装到本机 Skill 目录。这样以后不论在哪个对话里问禅道问题，Codex 都会先按正确字段口径读取数据，不依赖 Obsidian 或固定本机路径。
+
+```bash
+mkdir -p ~/.codex/skills
+ditto skills/zentao-data-assistant ~/.codex/skills/zentao-data-assistant
+```
+
+如果之前已经安装过旧版本 Skill，重复执行上面的 `ditto` 命令即可同步更新。
+
+安装后，可以在 Codex 里直接提：
+
+```text
+使用 $zentao-data-assistant 帮我查平台项目当前版本风险
+```
+
+如果没有安装 Skill，也可以直接在 `data-zentao` 仓库目录下使用。Codex 会读取 `AGENTS.md`，并按仓库内的 `skills/zentao-data-assistant/SKILL.md` 工作。
 
 ---
 
@@ -420,6 +453,7 @@ pip install -e .
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.7 | 2026-04-27 | 新增 `zentao-data-assistant` Codex Skill，修复数字任务 ID 查询需求，增强数据库超时重试，完善从零安装说明 |
 | v0.6 | 2026-04-27 | 对齐旧版日报、双项目周汇总、Bug界定和版本复盘的输出结构与文件命名 |
 | v0.5 | 2026-04-27 | 同步旧版日报下一版本预览、Bug界定、版本复盘能力，并修正需求/任务截止口径 |
 | v0.4 | 2026-04-27 | 新增 `doctor` 安装自检，明确最终输出需经 AI 判断 |

@@ -991,21 +991,18 @@ class ZentaoRepository:
         where = ["p.deleted = '0'"]
         params: list[Any] = []
         if id_value is not None:
-            pool_row = self.db.fetch_one(
+            where.append(
                 """
-                SELECT id
-                FROM zt_pool
-                WHERE deleted = '0'
-                  AND id = %s
-                LIMIT 1
-                """,
-                (id_value,),
+                (
+                  p.id = %s
+                  OR p.taskID = %s
+                  OR p.storyId = %s
+                  OR t.id = %s
+                  OR s.id = %s
+                )
+                """
             )
-            if pool_row:
-                where.append("p.id = %s")
-            else:
-                where.append("p.storyId = %s")
-            params.append(id_value)
+            params.extend([id_value, id_value, id_value, id_value, id_value])
         else:
             where.append(
                 """

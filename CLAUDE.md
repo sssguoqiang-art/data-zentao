@@ -4,6 +4,7 @@
 
 请遵守 `AGENTS.md` 中的工作流程和操作约束。核心原则：
 
+- 如果当前环境支持 Skills，优先使用 `$zentao-data-assistant`；否则先读取 `skills/zentao-data-assistant/SKILL.md` 和按需读取其 `references/`。
 - 先查真实数据，再总结。
 - 每次开始处理用户问题、且准备使用本仓库能力前，先运行 `data-zentao update-check`；如果提示远端有新版本，先询问用户是否更新。
 - 优先使用 `data-zentao` 命令。
