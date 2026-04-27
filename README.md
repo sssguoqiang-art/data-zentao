@@ -134,6 +134,8 @@ data-zentao unlock
 
 然后输入启动密码。启动密码请向仓库管理员获取，不要写进 Git。
 
+如果忘了先运行 `unlock`，也没关系。首次执行 `data-zentao check`、`data-zentao ask` 或报告命令时，工具会自动提示输入启动密码并完成解锁。
+
 解锁成功后，本机会保存一个本地授权文件，后续不用反复输入。需要重新锁定时运行：
 
 ```bash
@@ -505,6 +507,7 @@ ditto skills/zentao-data-assistant ~/.codex/skills/zentao-data-assistant
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.8.2 | 2026-04-27 | 首次运行查库/报告命令时自动提示输入启动密码 |
 | v0.8.1 | 2026-04-27 | 简化首次启动密码流程，`.env.example` 预置统一启动密码哈希 |
 | v0.8 | 2026-04-27 | 新增可选首次启动密码门禁：`hash-password`、`unlock`、`lock`、`auth-status` |
 | v0.7 | 2026-04-27 | 新增 `zentao-data-assistant` Codex Skill，修复数字任务 ID 查询需求，增强数据库超时重试，完善从零安装说明 |

@@ -88,4 +88,8 @@ def ensure_unlocked() -> None:
         return
     if is_unlocked():
         return
-    raise RuntimeError("当前电脑尚未解锁 data-zentao。请先运行：data-zentao unlock")
+    print("首次使用 data-zentao 需要输入启动密码完成本机解锁。", flush=True)
+    if prompt_unlock():
+        print("data-zentao 已解锁。")
+        return
+    raise RuntimeError("启动密码不正确。")
