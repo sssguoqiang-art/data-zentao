@@ -124,29 +124,15 @@ ZENTAO_DB_PASSWORD=
 ZENTAO_DB_NAME=zentao
 ```
 
-### 第五步：可选，设置首次启动密码
+### 第五步：首次解锁
 
-如果只是自己本机使用，可以跳过这一步。
-
-如果要发给其他人使用，建议启用首次启动密码。它的作用是：即使别人拿到了代码和 `.env`，也需要先在本机输入一次启动密码，才能运行查库和报告命令。
-
-先生成密码哈希：
-
-```bash
-data-zentao hash-password
-```
-
-命令会要求输入两次密码，然后输出类似：
-
-```text
-DATA_ZENTAO_START_PASSWORD_SHA256=...
-```
-
-把这一行填入 `.env`。之后首次使用前运行：
+`.env.example` 已经内置了统一启动密码的哈希。复制为 `.env` 后，首次使用前运行：
 
 ```bash
 data-zentao unlock
 ```
+
+然后输入启动密码。启动密码请向仓库管理员获取，不要写进 Git。
 
 解锁成功后，本机会保存一个本地授权文件，后续不用反复输入。需要重新锁定时运行：
 
@@ -161,6 +147,14 @@ data-zentao auth-status
 ```
 
 说明：这个首次启动密码是本机门禁，用于防止误用和随手转发后直接运行；它不能替代 GitHub 私有仓库权限、数据库账号权限，也不应把明文密码写进 git。
+
+如果你是管理员，后续想更换统一启动密码，可以运行：
+
+```bash
+data-zentao hash-password
+```
+
+把生成的新 `DATA_ZENTAO_START_PASSWORD_SHA256=...` 更新到 `.env.example` 或单独发给使用者。
 
 ### 第六步：验证连接
 
@@ -511,6 +505,7 @@ ditto skills/zentao-data-assistant ~/.codex/skills/zentao-data-assistant
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.8.1 | 2026-04-27 | 简化首次启动密码流程，`.env.example` 预置统一启动密码哈希 |
 | v0.8 | 2026-04-27 | 新增可选首次启动密码门禁：`hash-password`、`unlock`、`lock`、`auth-status` |
 | v0.7 | 2026-04-27 | 新增 `zentao-data-assistant` Codex Skill，修复数字任务 ID 查询需求，增强数据库超时重试，完善从零安装说明 |
 | v0.6 | 2026-04-27 | 对齐旧版日报、双项目周汇总、Bug界定和版本复盘的输出结构与文件命名 |
