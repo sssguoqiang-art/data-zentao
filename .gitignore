@@ -1,4 +1,5 @@
 .env
+.data-zentao/
 .venv/
 __pycache__/
 *.py[cod]

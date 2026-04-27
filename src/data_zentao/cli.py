@@ -5,6 +5,7 @@ import datetime as dt
 from pathlib import Path
 import sys
 
+from .auth import ensure_unlocked, hash_password, is_auth_enabled, lock as lock_auth, prompt_unlock, status as auth_status
 from .config import AppConfig
 from .db import ReadOnlyDatabase
 from .formatting import as_date, rows_to_md, to_json
@@ -209,6 +210,53 @@ def cmd_update_check(args: argparse.Namespace) -> int:
             "data-zentao 已是最新版本。"
             f"本地 {data.get('local')}，远端 {data.get('remote')}。"
         )
+    return 0
+
+
+def cmd_hash_password(_: argparse.Namespace) -> int:
+    import getpass
+
+    password = getpass.getpass("请输入要设置的启动密码：")
+    confirm = getpass.getpass("请再次输入启动密码：")
+    if password != confirm:
+        print("两次输入不一致。", file=sys.stderr)
+        return 1
+    if not password:
+        print("启动密码不能为空。", file=sys.stderr)
+        return 1
+    print("把下面这一行填入 .env：")
+    print(f"DATA_ZENTAO_START_PASSWORD_SHA256={hash_password(password)}")
+    return 0
+
+
+def cmd_unlock(_: argparse.Namespace) -> int:
+    if not is_auth_enabled():
+        print("未启用启动密码，无需解锁。")
+        return 0
+    if prompt_unlock():
+        print("data-zentao 已解锁。")
+        return 0
+    print("启动密码不正确。", file=sys.stderr)
+    return 1
+
+
+def cmd_lock(_: argparse.Namespace) -> int:
+    lock_auth()
+    print("data-zentao 已锁定。")
+    return 0
+
+
+def cmd_auth_status(args: argparse.Namespace) -> int:
+    data = auth_status()
+    if args.format == "json":
+        print(to_json(data))
+    else:
+        print(f"启动密码：{'已启用' if data['enabled'] else '未启用'}")
+        if data["enabled"]:
+            print(f"本机解锁：{'已解锁' if data['unlocked'] else '未解锁'}")
+        else:
+            print("本机解锁：无需解锁")
+        print(f"授权文件：{data['auth_file']}")
     return 0
 
 
@@ -711,6 +759,19 @@ def build_parser() -> argparse.ArgumentParser:
     update_check.add_argument("--format", choices=["markdown", "json"], default="markdown")
     update_check.set_defaults(func=cmd_update_check)
 
+    hash_password_parser = subparsers.add_parser("hash-password", help="生成首次启动密码哈希，供 .env 使用。")
+    hash_password_parser.set_defaults(func=cmd_hash_password)
+
+    unlock = subparsers.add_parser("unlock", help="首次启动时输入密码并解锁本机。")
+    unlock.set_defaults(func=cmd_unlock)
+
+    lock_parser = subparsers.add_parser("lock", help="清除本机解锁状态。")
+    lock_parser.set_defaults(func=cmd_lock)
+
+    auth_status_parser = subparsers.add_parser("auth-status", help="查看首次启动密码状态。")
+    auth_status_parser.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    auth_status_parser.set_defaults(func=cmd_auth_status)
+
     doctor = subparsers.add_parser("doctor", help="安装后自检数据库结构和核心能力。")
     add_common_date_arg(doctor)
     add_common_project_args(doctor)
@@ -859,8 +920,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        if args.command != "update-check":
+        local_commands = {"update-check", "hash-password", "unlock", "lock", "auth-status"}
+        if args.command not in local_commands:
             maybe_print_update_notice()
+            ensure_unlocked()
         return int(args.func(args))
     except Exception as exc:
         print(f"错误：{exc}", file=sys.stderr)

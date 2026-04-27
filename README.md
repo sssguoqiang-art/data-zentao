@@ -124,7 +124,45 @@ ZENTAO_DB_PASSWORD=
 ZENTAO_DB_NAME=zentao
 ```
 
-### 第五步：验证连接
+### 第五步：可选，设置首次启动密码
+
+如果只是自己本机使用，可以跳过这一步。
+
+如果要发给其他人使用，建议启用首次启动密码。它的作用是：即使别人拿到了代码和 `.env`，也需要先在本机输入一次启动密码，才能运行查库和报告命令。
+
+先生成密码哈希：
+
+```bash
+data-zentao hash-password
+```
+
+命令会要求输入两次密码，然后输出类似：
+
+```text
+DATA_ZENTAO_START_PASSWORD_SHA256=...
+```
+
+把这一行填入 `.env`。之后首次使用前运行：
+
+```bash
+data-zentao unlock
+```
+
+解锁成功后，本机会保存一个本地授权文件，后续不用反复输入。需要重新锁定时运行：
+
+```bash
+data-zentao lock
+```
+
+查看状态：
+
+```bash
+data-zentao auth-status
+```
+
+说明：这个首次启动密码是本机门禁，用于防止误用和随手转发后直接运行；它不能替代 GitHub 私有仓库权限、数据库账号权限，也不应把明文密码写进 git。
+
+### 第六步：验证连接
 
 ```bash
 data-zentao check
@@ -139,7 +177,7 @@ data-zentao check
 用户数量：233
 ```
 
-### 第六步：安装 Codex Skill（推荐）
+### 第七步：安装 Codex Skill（推荐）
 
 这一步不是运行 `data-zentao` 的硬性前置条件，但强烈建议 Codex 用户安装。
 
@@ -164,7 +202,7 @@ test -f ~/.codex/skills/zentao-data-assistant/SKILL.md && echo "Skill installed"
 
 如果暂时不安装 Skill，也可以直接在 `data-zentao` 仓库目录下使用。Codex 会读取 `AGENTS.md`，并按仓库内的 `skills/zentao-data-assistant/SKILL.md` 工作。
 
-### 第七步：开始使用或运行完整自检
+### 第八步：开始使用或运行完整自检
 
 `check` 通过后，就可以在 Claude Code / Codex 里开始对话查询。比如：
 
@@ -446,6 +484,10 @@ data-zentao version-delay --version-id 405
 
 但如果希望在不同对话、不同目录里都能直接问禅道问题，建议安装 Skill。它能让 Codex 自动带上字段口径、查询规则和自检机制，避免重新沟通数据库结构。
 
+**Q：首次启动密码能替代 GitHub 私有仓库权限吗？**
+
+不能。首次启动密码只是本机使用门禁，适合防止误用或转发后直接运行。真正的访问控制仍然建议使用 GitHub 私有仓库授权和数据库账号权限。
+
 **Q：最终输出是 AI 判断过的吗？**
 
 通过 Claude/Codex 使用时，最终回复必须由 AI 基于工具返回的数据再判断、归纳和解释。直接在终端运行 `data-zentao` 得到的是数据材料或报告草稿，不等同于完整 AI 结论。
@@ -469,6 +511,7 @@ ditto skills/zentao-data-assistant ~/.codex/skills/zentao-data-assistant
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.8 | 2026-04-27 | 新增可选首次启动密码门禁：`hash-password`、`unlock`、`lock`、`auth-status` |
 | v0.7 | 2026-04-27 | 新增 `zentao-data-assistant` Codex Skill，修复数字任务 ID 查询需求，增强数据库超时重试，完善从零安装说明 |
 | v0.6 | 2026-04-27 | 对齐旧版日报、双项目周汇总、Bug界定和版本复盘的输出结构与文件命名 |
 | v0.5 | 2026-04-27 | 同步旧版日报下一版本预览、Bug界定、版本复盘能力，并修正需求/任务截止口径 |

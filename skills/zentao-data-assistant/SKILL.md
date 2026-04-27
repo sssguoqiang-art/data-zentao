@@ -15,9 +15,10 @@ Use this skill to answer ZenTao questions through `data-zentao` and the bundled 
 2. Before using repository commands, run `data-zentao update-check` when the command is available. If it says the remote is ahead, tell the user and ask whether to update before continuing.
 3. If the CLI is not installed, use `PYTHONPATH=src python3 -c "from data_zentao.cli import main; raise SystemExit(main())"` from the repository root.
 4. If database config is missing, ask for the required `.env` values or tell the user which variables are missing. Do not write credentials into tracked files or final answers.
-5. Classify the user request: project/version report, demand/task detail, person, department, Bug/quality, todo/measure, schema/field explanation, or free SQL analysis.
-6. Read only the relevant reference files below, then call `data-zentao` commands or read-only SQL.
-7. Treat command output as data material, not the final answer. The final answer must include AI judgment: conclusion, evidence, risk, and next action.
+5. If `.env` enables `DATA_ZENTAO_START_PASSWORD_SHA256`, run `data-zentao auth-status`; if not unlocked, ask the user to run `data-zentao unlock`.
+6. Classify the user request: project/version report, demand/task detail, person, department, Bug/quality, todo/measure, schema/field explanation, or free SQL analysis.
+7. Read only the relevant reference files below, then call `data-zentao` commands or read-only SQL.
+8. Treat command output as data material, not the final answer. The final answer must include AI judgment: conclusion, evidence, risk, and next action.
 
 ## Reference Loading
 
