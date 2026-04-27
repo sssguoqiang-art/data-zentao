@@ -458,17 +458,20 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         except Exception as exc:
             add("Bug界定", "FAIL", str(exc))
 
-        try:
-            review_payload = build_version_review_payload(
-                repo,
-                args.product_name or config.platform_product_name,
-                args.project_name or config.platform_project_name,
-                version_id,
-                query_date,
-            )
-            add("版本复盘", "OK", f"版本={review_payload.get('version_delay', {}).get('version', {}).get('name')}")
-        except Exception as exc:
-            add("版本复盘", "FAIL", str(exc))
+        if args.full:
+            try:
+                review_payload = build_version_review_payload(
+                    repo,
+                    args.product_name or config.platform_product_name,
+                    args.project_name or config.platform_project_name,
+                    version_id,
+                    query_date,
+                )
+                add("版本复盘", "OK", f"版本={review_payload.get('version_delay', {}).get('version', {}).get('name')}")
+            except Exception as exc:
+                add("版本复盘", "FAIL", str(exc))
+        else:
+            add("版本复盘", "OK", "入口可用；完整报告请运行 data-zentao version-review，或 doctor --full 做全量验证。")
 
         try:
             dept_rows = repo.db.fetch_all(
@@ -489,37 +492,40 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         except Exception as exc:
             add("查部门风险", "FAIL", str(exc))
 
-        try:
-            payload = build_daily_report_payload(
-                repo,
-                args.product_name or config.platform_product_name,
-                args.project_name or config.platform_project_name,
-                query_date,
-            )
-            add("生成日报", "OK" if payload.get("ok") else "FAIL", payload.get("message") or f"版本={payload.get('current_sprint', {}).get('name')}")
-        except Exception as exc:
-            add("生成日报", "FAIL", str(exc))
+        if args.full:
+            try:
+                payload = build_daily_report_payload(
+                    repo,
+                    args.product_name or config.platform_product_name,
+                    args.project_name or config.platform_project_name,
+                    query_date,
+                )
+                add("生成日报", "OK" if payload.get("ok") else "FAIL", payload.get("message") or f"版本={payload.get('current_sprint', {}).get('name')}")
+            except Exception as exc:
+                add("生成日报", "FAIL", str(exc))
 
-        try:
-            start_date = week_start(query_date)
-            payload = build_weekly_report_payload(
-                repo,
-                args.product_name or config.platform_product_name,
-                args.project_name or config.platform_project_name,
-                start_date,
-                query_date,
-                query_date,
-            )
-            add("生成周报", "OK" if payload.get("ok") else "FAIL", payload.get("message") or f"周期={start_date} ~ {query_date}")
-        except Exception as exc:
-            add("生成周报", "FAIL", str(exc))
+            try:
+                start_date = week_start(query_date)
+                payload = build_weekly_report_payload(
+                    repo,
+                    args.product_name or config.platform_product_name,
+                    args.project_name or config.platform_project_name,
+                    start_date,
+                    query_date,
+                    query_date,
+                )
+                add("生成周报", "OK" if payload.get("ok") else "FAIL", payload.get("message") or f"周期={start_date} ~ {query_date}")
+            except Exception as exc:
+                add("生成周报", "FAIL", str(exc))
 
-        try:
-            start_date = week_start(query_date)
-            payload = build_weekly_summary_payload(repo, start_date, query_date, query_date, include_history=False)
-            add("生成周汇总", "OK" if payload.get("ok") else "FAIL", "；".join(payload.get("warnings") or []) or f"周期={start_date} ~ {query_date}")
-        except Exception as exc:
-            add("生成周汇总", "FAIL", str(exc))
+            try:
+                start_date = week_start(query_date)
+                payload = build_weekly_summary_payload(repo, start_date, query_date, query_date, include_history=False)
+                add("生成周汇总", "OK" if payload.get("ok") else "FAIL", "；".join(payload.get("warnings") or []) or f"周期={start_date} ~ {query_date}")
+            except Exception as exc:
+                add("生成周汇总", "FAIL", str(exc))
+        else:
+            add("报告生成", "OK", "日报、周报、周汇总使用独立命令验证；doctor 默认只做安装烟测，doctor --full 可跑全量报告。")
 
     try:
         users = repo.find_users("", limit=1)
@@ -904,6 +910,7 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = subparsers.add_parser("doctor", help="安装后自检数据库结构和核心能力。")
     add_common_date_arg(doctor)
     add_common_project_args(doctor)
+    doctor.add_argument("--full", action="store_true", help="执行包含日报、周报和版本复盘的全量报告自检，耗时会明显更长。")
     doctor.add_argument("--format", choices=["markdown", "json"], default="markdown")
     doctor.set_defaults(func=cmd_doctor)
 

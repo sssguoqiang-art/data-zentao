@@ -230,7 +230,7 @@ test -f ~/.codex/skills/zentao-data-assistant/SKILL.md && echo "Skill installed"
 
 如果暂时不安装 Skill，也可以直接在 `data-zentao` 仓库目录下使用。Codex 会读取 `AGENTS.md`，并按仓库内的 `skills/zentao-data-assistant/SKILL.md` 工作。
 
-### 第八步：开始使用或运行完整自检
+### 第八步：开始使用或运行安装自检
 
 `check` 通过后，就可以在 Claude Code / Codex 里开始对话查询。比如：
 
@@ -240,15 +240,21 @@ test -f ~/.codex/skills/zentao-data-assistant/SKILL.md && echo "Skill installed"
 帮我生成今日项目报告
 ```
 
-如果是第一次装到一台新电脑，建议再跑一次完整自检：
+如果是第一次装到一台新电脑，建议再跑一次安装自检：
 
 ```bash
 data-zentao doctor
 ```
 
-这个命令会检查数据库连接、核心表字段、当前版本定位，以及需求、任务、Bug、待办、举措、日报、周报等能力的数据通路。
+这个命令会检查数据库连接、核心表字段、当前版本定位，以及需求、任务、Bug、待办、举措等基础数据通路。
 
-完整自检会真实访问多张表和多类报告，可能耗时几分钟。只要没有 `FAIL`，就代表安装和基础数据读取通过。若出现 `WARN`，通常表示当前样本数据为空，需要结合实际问题再查。
+如果需要连日报、周报、版本复盘一起做全量报告自检，可以运行：
+
+```bash
+data-zentao doctor --full
+```
+
+全量自检会真实访问多张表和多类报告，可能耗时几分钟。只要没有 `FAIL`，就代表安装和基础数据读取通过。若出现 `WARN`，通常表示当前样本数据为空，需要结合实际问题再查。
 
 ---
 
@@ -469,6 +475,7 @@ data-zentao query --format json --sql "SELECT id, name FROM zt_project LIMIT 10"
 ```bash
 data-zentao todos --status unfinished
 data-zentao doctor
+data-zentao doctor --full
 data-zentao todos --status ongoing
 data-zentao demand-status "VIP 权益功能优化"
 data-zentao person-tasks "person_account"
@@ -539,7 +546,7 @@ ditto skills/zentao-data-assistant ~/.codex/skills/zentao-data-assistant
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
-| v0.9.3 | 2026-04-27 | 优化周汇总和版本复盘的批量汇总查询，避免报告类命令因重复快照查询超时 |
+| v0.9.3 | 2026-04-27 | 优化周汇总和版本复盘的批量汇总查询，并将 `doctor` 拆成默认安装烟测和 `doctor --full` 全量报告自检 |
 | v0.9.2 | 2026-04-27 | 查库命令遇到缺配置、访问密码错误或数据库连接失败时，可自动引导重新执行 setup |
 | v0.9.1 | 2026-04-27 | 简化 `setup`：只询问数据库连接和 Git访问密码，并在初始化时直接完成解锁 |
 | v0.9 | 2026-04-27 | 新增 `data-zentao setup` 初始化向导，支持对话式生成本机配置并安装 Skill |
