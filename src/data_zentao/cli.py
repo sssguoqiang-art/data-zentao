@@ -20,6 +20,7 @@ from .reports import (
     build_version_delay_payload,
     build_version_review_payload,
     build_weekly_report_payload,
+    build_weekly_summary_payload,
     render_bug_boundary_report,
     render_daily_report,
     render_dept_risk_report,
@@ -32,6 +33,7 @@ from .reports import (
     render_version_delay_report,
     render_version_review_report,
     render_weekly_report,
+    render_weekly_summary_report,
 )
 from .router import answer_question
 
@@ -122,6 +124,16 @@ def add_common_project_args(parser: argparse.ArgumentParser) -> None:
 
 def week_start(value: dt.date) -> dt.date:
     return value - dt.timedelta(days=value.weekday())
+
+
+def safe_filename(value: object) -> str:
+    return str(value).replace("/", "_").replace("\\", "_").replace(":", "_").strip()
+
+
+def weekly_variant_filename(ref: dt.date, report_type: str) -> str:
+    year, week, _ = ref.isocalendar()
+    label = "效能周报" if report_type == "report" else "效能周汇总"
+    return f"{year}{week:02d}_{label}.md"
 
 
 def resolve_version_id(
@@ -304,6 +316,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             add("生成周报", "OK" if payload.get("ok") else "FAIL", payload.get("message") or f"周期={start_date} ~ {query_date}")
         except Exception as exc:
             add("生成周报", "FAIL", str(exc))
+
+        try:
+            start_date = week_start(query_date)
+            payload = build_weekly_summary_payload(repo, start_date, query_date, query_date, include_history=False)
+            add("生成周汇总", "OK" if payload.get("ok") else "FAIL", "；".join(payload.get("warnings") or []) or f"周期={start_date} ~ {query_date}")
+        except Exception as exc:
+            add("生成周汇总", "FAIL", str(exc))
 
     try:
         users = repo.find_users("", limit=1)
@@ -495,7 +514,8 @@ def cmd_bug_boundary(args: argparse.Namespace) -> int:
         if args.save:
             output_dir = Path(args.output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
-            output_path = output_dir / f"{version_id}_Bug界定预分类.md"
+            version_name = safe_filename((payload.get("version") or {}).get("name") or version_id)
+            output_path = output_dir / f"{version_name} 复盘预分类报告.md"
             output_path.write_text(report, encoding="utf-8")
             print(f"已生成：{output_path}")
             if not args.quiet:
@@ -525,8 +545,8 @@ def cmd_version_review(args: argparse.Namespace) -> int:
             output_dir = Path(args.output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
             version = (payload.get("version_delay") or {}).get("version") or {}
-            version_name = str(version.get("name") or version_id).replace("/", "_")
-            output_path = output_dir / f"{version_name}_版本复盘.md"
+            version_name = safe_filename(version.get("name") or version_id)
+            output_path = output_dir / f"版本复盘 · {version_name}.md"
             output_path.write_text(report, encoding="utf-8")
             print(f"已生成：{output_path}")
             if not args.quiet:
@@ -578,6 +598,39 @@ def cmd_weekly_report(args: argparse.Namespace) -> int:
             print(report)
     else:
         print(report)
+    return 0 if payload.get("ok") else 1
+
+
+def cmd_weekly_summary(args: argparse.Namespace) -> int:
+    _, repo = make_repo()
+    query_date = as_date(args.date)
+    start_date = as_date(args.start) if args.start else week_start(query_date)
+    end_date = as_date(args.end) if args.end else query_date
+    payload = build_weekly_summary_payload(repo, start_date, end_date, query_date)
+
+    if args.format == "json":
+        print(to_json(payload))
+        return 0 if payload.get("ok") else 1
+
+    if not args.save:
+        print(render_weekly_summary_report(payload, "report" if args.report_type == "report" else "summary"))
+        return 0 if payload.get("ok") else 1
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    report_types = ["summary", "report"] if args.report_type == "both" else [args.report_type]
+    output_paths: list[Path] = []
+    for report_type in report_types:
+        report = render_weekly_summary_report(payload, report_type)
+        output_path = output_dir / weekly_variant_filename(query_date, report_type)
+        output_path.write_text(report, encoding="utf-8")
+        output_paths.append(output_path)
+
+    for output_path in output_paths:
+        print(f"已生成：{output_path}")
+    if not args.quiet:
+        print()
+        print(render_weekly_summary_report(payload, report_types[0]))
     return 0 if payload.get("ok") else 1
 
 
@@ -746,6 +799,17 @@ def build_parser() -> argparse.ArgumentParser:
     weekly_report.add_argument("--save", action=argparse.BooleanOptionalAction, default=True)
     weekly_report.add_argument("--quiet", action="store_true", help="保存文件后不在终端打印全文。")
     weekly_report.set_defaults(func=cmd_weekly_report)
+
+    weekly_summary = subparsers.add_parser("weekly-summary", help="生成旧版双项目效能周汇总/周报。")
+    add_common_date_arg(weekly_summary)
+    weekly_summary.add_argument("--start", default=None, help="开始日期，默认本周一。")
+    weekly_summary.add_argument("--end", default=None, help="结束日期，默认查询日期。")
+    weekly_summary.add_argument("--output-dir", default="reports/周汇总")
+    weekly_summary.add_argument("--report-type", choices=["summary", "report", "both"], default="both")
+    weekly_summary.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    weekly_summary.add_argument("--save", action=argparse.BooleanOptionalAction, default=True)
+    weekly_summary.add_argument("--quiet", action="store_true", help="保存文件后不在终端打印全文。")
+    weekly_summary.set_defaults(func=cmd_weekly_summary)
 
     ask = subparsers.add_parser("ask", help="一句话查询。")
     ask.add_argument("question")

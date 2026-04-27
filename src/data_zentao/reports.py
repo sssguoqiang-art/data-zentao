@@ -64,6 +64,34 @@ def bug_review_suggestion(row: dict[str, Any]) -> str:
     return "复盘价值待确认"
 
 
+def bug_boundary_state(row: dict[str, Any]) -> str:
+    owner = str(row.get("ownerDeptName") or row.get("ownerDept") or "").strip()
+    has_reason = bool(row.get("causeAnalysis") or row.get("dept_review"))
+    if owner and owner != "未填写" and has_reason:
+        return "确定"
+    if owner and owner != "未填写":
+        return "需会前确认"
+    return "归属待补充"
+
+
+def bug_severity_text(value: object) -> str:
+    mapping = {
+        1: "极严重",
+        2: "高",
+        3: "中",
+        4: "低",
+    }
+    try:
+        return mapping.get(int(value), serialize(value))
+    except (TypeError, ValueError):
+        return serialize(value)
+
+
+def report_version_name(payload: dict[str, Any]) -> str:
+    version = payload.get("version") or {}
+    return str(version.get("name") or payload.get("version_id") or "未知版本")
+
+
 def render_todo_report(rows: list[dict[str, Any]], status: str) -> str:
     label = TODO_STATUS_LABELS.get(status, status)
     lines = [f"当前{label}待办一共 {len(rows)} 条。", ""]
@@ -291,67 +319,63 @@ def render_daily_report(payload: dict[str, Any]) -> str:
     elif isinstance(end_date, dt.date):
         days_left = (end_date - as_of).days
 
-    task_total = serialize(task_summary.get("total_tasks", 0))
-    task_open = serialize(task_summary.get("open_tasks", 0))
-    active_bug_count = serialize(bug_summary.get("active_bugs", 0))
-    high_bug_count = serialize(bug_summary.get("active_high_bugs", 0))
-
-    conclusion = [
-        f"当前版本为 {sprint.get('name')}，计划周期 {serialize(sprint.get('begin'))} ~ {serialize(sprint.get('end'))}。",
-        f"版本任务共 {task_total} 个，未关闭 {task_open} 个；今日完成 {len(today_finished)} 个，今日新建 {len(today_opened)} 个。",
-        f"当前逾期未完成任务 {len(overdue_open)} 个，今日到期未完成任务 {len(due_today)} 个。",
-        f"当前版本 Bug 共 {serialize(bug_summary.get('total_bugs', 0))} 个，未解决 active Bug {active_bug_count} 个，其中高严重级别 active Bug {high_bug_count} 个。",
-        f"当前未完成待办 {len(unfinished_todos)} 条。",
-    ]
-    if days_left is not None:
-        conclusion.insert(1, f"距离版本结束还有 {days_left} 天。")
-    if not task_summary.get("delay_reason_count") and not pool_delay.get("delay_reason_count"):
-        conclusion.append("延期原因字段基本为空，延期归因需要人工补充或结合会议信息判断。")
+    status_counts = {row.get("status"): int(row.get("count") or 0) for row in task_status}
+    done_count = status_counts.get("done", 0) + status_counts.get("closed", 0)
+    dev_count = status_counts.get("wait", 0) + status_counts.get("doing", 0)
+    testing_count = status_counts.get("testing", 0) + status_counts.get("waittest", 0)
+    release_label = "发布日" if days_left == 0 else (f"距发布 {days_left} 天" if days_left is not None else "推进核查")
+    weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    date_label = f"{as_of.month}月{as_of.day}日（{weekday_names[as_of.weekday()]}）"
 
     lines = [
-        f"# 平台项目今日报告（{serialize(as_of)}）",
+        f"# 平台项目日报 · {date_label} · {release_label}",
         "",
-        "## 一、今日结论",
+        f"## 当前版本 {sprint.get('name')} · 发布核查",
         "",
-        *[f"- {item}" for item in conclusion],
-        "",
-        "## 二、当前版本概况",
-        "",
-        md_table(
-            ["项目", "当前版本", "版本状态", "开始", "结束", "剩余天数", "下一版本"],
-            [
-                [
-                    sprint.get("project_name") or "平台部",
-                    sprint.get("name"),
-                    sprint.get("status"),
-                    serialize(sprint.get("begin")),
-                    serialize(sprint.get("end")),
-                    "" if days_left is None else days_left,
-                    next_sprint.get("name") or "",
-                ]
-            ],
+        (
+            f"> 当前版本任务 {serialize(task_summary.get('total_tasks', 0))} 项，"
+            f"已完成/关闭 {done_count} 项，未关闭 {serialize(task_summary.get('open_tasks', 0))} 项；"
+            f"今日完成 {len(today_finished)} 项，今日新建 {len(today_opened)} 项。"
+            f"当前 Active Bug {serialize(bug_summary.get('active_bugs', 0))} 条，"
+            f"逾期未完成任务 {len(overdue_open)} 项。"
         ),
         "",
-        "### 任务状态分布",
+        f"**可直接发布：{done_count} 项已完成/关闭**",
+        "",
+        "---",
+        "",
+        f"**开发中/未开始（{dev_count}）**",
         "",
         md_table(
             ["状态", "中文含义", "数量"],
             [
                 [row.get("status"), TASK_STATUS_LABELS.get(row.get("status"), ""), serialize(row.get("count"))]
                 for row in task_status
+                if row.get("status") in {"wait", "doing"}
             ],
         ),
         "",
-        "## 三、今日推进",
+        "---",
         "",
-        f"今日完成任务 {len(today_finished)} 个，今日新建任务 {len(today_opened)} 个。",
+        f"**测试中（{testing_count}）**",
+        "",
+        md_table(
+            ["状态", "中文含义", "数量"],
+            [
+                [row.get("status"), TASK_STATUS_LABELS.get(row.get("status"), ""), serialize(row.get("count"))]
+                for row in task_status
+                if row.get("status") in {"testing", "waittest"}
+            ] or [["无", "", "0"]],
+        ),
     ]
 
     if today_finished:
         lines.extend(
             [
                 "",
-                "### 今日完成任务",
+                "---",
+                "",
+                f"**今日完成任务（{len(today_finished)}）**",
                 "",
                 md_table(
                     ["任务ID", "所属需求", "任务", "完成人", "完成时间", "延期"],
@@ -374,7 +398,9 @@ def render_daily_report(payload: dict[str, Any]) -> str:
         lines.extend(
             [
                 "",
-                "### 今日新建任务",
+                "---",
+                "",
+                f"**今日新建任务（{len(today_opened)}）**",
                 "",
                 md_table(
                     ["任务ID", "所属需求", "任务", "负责人", "创建人", "截止"],
@@ -393,29 +419,25 @@ def render_daily_report(payload: dict[str, Any]) -> str:
             ]
         )
 
-    lines.extend(["", "## 四、风险与延期", ""])
+    lines.extend(["", "---", "", f"**延期关注（{len(overdue_open)}）**", ""])
     if overdue_open:
-        lines.extend(
-            [
-                f"当前仍有 {len(overdue_open)} 个逾期未完成任务：",
-                "",
-                md_table(
-                    ["任务ID", "所属需求", "任务", "负责人", "状态", "截止", "逾期", "剩余工时"],
+        lines.append(
+            md_table(
+                ["任务ID", "所属需求", "任务", "负责人", "状态", "截止", "逾期", "剩余工时"],
+                [
                     [
-                        [
-                            row.get("id"),
-                            trim_text(row.get("root_name"), 28),
-                            trim_text(row.get("name"), 38),
-                            row.get("assignedName") or row.get("assignedTo"),
-                            row.get("status"),
-                            serialize(row.get("deadline")),
-                            f"{serialize(row.get('overdue_days'))}天",
-                            serialize(row.get("left")),
-                        ]
-                        for row in overdue_open
-                    ],
-                ),
-            ]
+                        row.get("id"),
+                        trim_text(row.get("root_name"), 28),
+                        trim_text(row.get("name"), 38),
+                        row.get("assignedName") or row.get("assignedTo"),
+                        row.get("status"),
+                        serialize(row.get("deadline")),
+                        f"{serialize(row.get('overdue_days'))}天",
+                        serialize(row.get("left")),
+                    ]
+                    for row in overdue_open
+                ],
+            )
         )
     else:
         lines.append("当前没有逾期未完成任务。")
@@ -424,7 +446,7 @@ def render_daily_report(payload: dict[str, Any]) -> str:
         lines.extend(
             [
                 "",
-                f"今日到期未完成任务 {len(due_today)} 个：",
+                f"**今日到期未完成任务（{len(due_today)}）**",
                 "",
                 md_table(
                     ["任务ID", "所属需求", "任务", "负责人", "状态", "剩余工时"],
@@ -447,7 +469,7 @@ def render_daily_report(payload: dict[str, Any]) -> str:
         lines.extend(
             [
                 "",
-                "任务字段中显式记录延期的任务：",
+                "**任务字段中显式记录延期的任务**",
                 "",
                 md_table(
                     ["任务ID", "所属需求", "任务", "负责人", "延期次数", "延期原因"],
@@ -466,35 +488,12 @@ def render_daily_report(payload: dict[str, Any]) -> str:
         ]
     )
 
-    if next_sprint:
-        lines.extend(
-            [
-                "",
-                "### 下一版本预览",
-                "",
-                md_table(
-                    ["下一版本", "开始", "结束", "任务数", "未关闭任务", "需求数", "未关联任务需求"],
-                    [
-                        [
-                            next_sprint.get("name"),
-                            serialize(next_sprint.get("begin")),
-                            serialize(next_sprint.get("end")),
-                            serialize(next_task_summary.get("total_tasks", 0)),
-                            serialize(next_task_summary.get("open_tasks", 0)),
-                            serialize(next_demand_summary.get("total_demands", 0)),
-                            serialize(next_demand_summary.get("without_task", 0)),
-                        ]
-                    ],
-                ),
-                "",
-                "下一版本数据只做前置关注，不与当前版本交付完成率混算。",
-            ]
-        )
-
     lines.extend(
         [
             "",
-            "## 五、Bug 情况",
+            "---",
+            "",
+            f"**线上/版本 Bug（{serialize(bug_summary.get('active_bugs', 0))}）**",
             "",
             md_table(
                 ["总数", "active", "resolved", "closed", "今日新增", "今日解决", "今日关闭", "高严重 active"],
@@ -511,14 +510,6 @@ def render_daily_report(payload: dict[str, Any]) -> str:
                     ]
                 ],
             ),
-            "",
-            "### Bug 状态分布",
-            "",
-            md_table(["状态", "数量"], [[row.get("status"), serialize(row.get("count"))] for row in bug_status]),
-            "",
-            "### Bug 严重级别分布",
-            "",
-            md_table(["严重级别", "数量"], [[row.get("severity"), serialize(row.get("count"))] for row in bug_severity]),
         ]
     )
 
@@ -526,7 +517,7 @@ def render_daily_report(payload: dict[str, Any]) -> str:
         lines.extend(
             [
                 "",
-                "### 当前 active Bug",
+                "**当前 Active Bug 明细**",
                 "",
                 md_table(
                     ["BugID", "标题", "严重", "优先级", "负责人", "创建时间", "归属"],
@@ -549,70 +540,47 @@ def render_daily_report(payload: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "## 六、需求与待办",
+            "---",
             "",
-            "### 当前版本需求概况",
+            f"## 下一版本 {next_sprint.get('name') if next_sprint else '未定位'}",
+            "",
+            (
+                f"> 下一版本需求 {serialize(next_demand_summary.get('total_demands', 0))} 项，"
+                f"已关联任务 {serialize(next_demand_summary.get('with_task', 0))} 项，"
+                f"未关联任务 {serialize(next_demand_summary.get('without_task', 0))} 项；"
+                f"任务总数 {serialize(next_task_summary.get('total_tasks', 0))} 项，"
+                f"未关闭 {serialize(next_task_summary.get('open_tasks', 0))} 项。"
+            ),
+            "",
+            "**需求总览**",
             "",
             md_table(
-                ["版本需求", "已关联任务", "未关联任务", "延期原因已填", "延期举措已填"],
+                ["需求总数", "已下单/有关联任务", "未下单/未关联任务", "延期原因已填", "延期举措已填"],
                 [
                     [
-                        serialize(demand_summary.get("total_demands", 0)),
-                        serialize(demand_summary.get("with_task", 0)),
-                        serialize(demand_summary.get("without_task", 0)),
-                        serialize(demand_summary.get("delay_reason_count", 0)),
-                        serialize(demand_summary.get("delay_measure_count", 0)),
+                        serialize(next_demand_summary.get("total_demands", 0)),
+                        serialize(next_demand_summary.get("with_task", 0)),
+                        serialize(next_demand_summary.get("without_task", 0)),
+                        serialize(next_demand_summary.get("delay_reason_count", 0)),
+                        serialize(next_demand_summary.get("delay_measure_count", 0)),
                     ]
                 ],
             ),
-        ]
-    )
-
-    if demand_status:
-        lines.extend(
-            [
-                "",
-                "### 版本需求状态分布",
-                "",
-                md_table(["状态", "数量"], [[row.get("status"), serialize(row.get("count"))] for row in demand_status]),
-            ]
-        )
-
-    if unfinished_todos:
-        lines.extend(
-            [
-                "",
-                "### 当前未完成待办",
-                "",
-                md_table(
-                    ["ID", "状态", "待办", "部门", "责任人", "类型", "截止"],
+            "",
+            "**版本任务概况**",
+            "",
+            md_table(
+                ["版本", "开始", "结束", "任务数", "未关闭任务"],
+                [
                     [
-                        [
-                            row.get("id"),
-                            row.get("status_name"),
-                            trim_text(row.get("content"), 44),
-                            row.get("dept_name"),
-                            row.get("duty_names"),
-                            row.get("type_name"),
-                            serialize(row.get("deadlineTime")),
-                        ]
-                        for row in unfinished_todos[:20]
-                    ],
-                ),
-            ]
-        )
-
-    lines.extend(
-        [
-            "",
-            "## 七、数据口径",
-            "",
-            "- 当前版本：按 `zt_product.name='平台部'` 与 `zt_project.type='sprint'`，并匹配查询日期落在版本周期内。",
-            "- 任务：`zt_task.execution=当前版本ID` 且 `deleted='0'`。",
-            "- 当前逾期：`deadline < 查询日期` 且状态不在 `done/closed/cancel`。",
-            "- Bug：`zt_bug.execution=当前版本ID` 且 `deleted='0'`。",
-            "- 待办：`zt_to_do_list.deleted='1'`，未完成排除 `已完成=8`、`已关闭=9`。",
-            "- 本报告按当前数据库实时数据生成，数据会随禅道更新变化。",
+                        next_sprint.get("name") if next_sprint else "未定位",
+                        serialize(next_sprint.get("begin")) if next_sprint else "",
+                        serialize(next_sprint.get("end")) if next_sprint else "",
+                        serialize(next_task_summary.get("total_tasks", 0)),
+                        serialize(next_task_summary.get("open_tasks", 0)),
+                    ]
+                ],
+            ),
         ]
     )
 
@@ -938,6 +906,7 @@ def render_bug_boundary_report(payload: dict[str, Any]) -> str:
     unknown = buckets.get("unknown") or []
     low_quality = payload.get("low_quality_tasks") or []
     bugs = payload.get("bugs") or []
+    version_name = report_version_name(payload)
 
     dept_totals: dict[str, dict[str, int]] = {}
     for row in bugs:
@@ -952,140 +921,131 @@ def render_bug_boundary_report(payload: dict[str, Any]) -> str:
             dept_totals[dept]["key"] += 1
 
     lines = [
-        f"# Bug界定预分类（版本 {payload.get('version_id')}）",
+        f"# {version_name}Bug 界定预分类",
         "",
-        "## 一、界定结论",
-        "",
-        f"- 原始 Bug：{serialize(summary.get('total_bugs', len(bugs)))} 条；active：{serialize(summary.get('active_bugs', 0))} 条。",
-        f"- 疑似非Bug：{len(nonbug)} 条；外部Bug候选：{len(external)} 条；内部Bug候选：{len(internal)} 条；运维Bug：{len(ops)} 条；未分类：{len(unknown)} 条。",
-        f"- 低质量任务候选：{len(low_quality)} 个。",
-        "- 本报告是会前预分类材料，最终责任界定仍建议在复盘会上结合业务背景确认。",
-        "",
-        "## 二、部门 Bug 总览",
+        f"**数据截取时间：** {dt.datetime.now().strftime('%Y-%m-%d %H:%M')} · "
+        f"**原始Bug总量：** {serialize(summary.get('total_bugs', len(bugs)))} 条 · "
+        f"疑似非Bug {len(nonbug)} 条",
         "",
         md_table(
-            ["归属", "总数", "外部候选", "内部候选", "疑似非Bug", "关键Bug"],
+            ["外部复盘Bug", "内部复盘Bug", "低质量任务", "疑似非Bug", "未分类"],
+            [[f"{len(external)} 条", f"{len(internal)} 条", f"{len(low_quality)} 个", f"{len(nonbug)} 条", f"{len(unknown)} 条"]],
+        ),
+        "",
+        "---",
+        "",
+        "## 一、部门 Bug 数量总览",
+        "",
+        md_table(
+            ["部门", "外部Bug", "内部Bug（高/典型）", "疑似非Bug", "合计"],
             [
                 [
                     dept,
-                    serialize(values["total"]),
                     serialize(values["external"]),
                     serialize(values["internal"]),
                     serialize(values["nonbug"]),
-                    serialize(values["key"]),
+                    f"**{serialize(values['total'])}**",
                 ]
                 for dept, values in sorted(dept_totals.items(), key=lambda item: (-item[1]["total"], item[0]))
-            ],
+            ] or [["无", "0", "0", "0", "**0**"]],
         ),
+        "",
+        "---",
+        "",
+        "## 二、疑似非Bug 清单",
+        "",
     ]
 
     if nonbug:
-        lines.extend(
-            [
-                "",
-                "## 三、疑似非Bug清单",
-                "",
-                md_table(
-                    ["BugID", "标题", "类型", "状态", "原因/判断"],
+        lines.append(
+            md_table(
+                ["BugID", "标题", "类型", "状态", "剔除原因"],
+                [
                     [
-                        [
-                            row.get("id"),
-                            trim_text(row.get("title"), 52),
-                            row.get("type"),
-                            row.get("status"),
-                            bug_review_suggestion(row),
-                        ]
-                        for row in nonbug[:30]
-                    ],
-                ),
-            ]
+                        row.get("id"),
+                        trim_text(row.get("title"), 52),
+                        row.get("type"),
+                        row.get("status"),
+                        trim_text(row.get("causeAnalysis") or bug_review_suggestion(row), 36),
+                    ]
+                    for row in nonbug[:30]
+                ],
+            )
         )
+    else:
+        lines.append("本版本无疑似非Bug。")
 
+    lines.extend(["", "---", "", f"## 三、外部 Bug 责任界定（{len(external)} 条）", ""])
     if external:
-        lines.extend(
-            [
-                "",
-                "## 四、外部Bug界定候选",
-                "",
-                md_table(
-                    ["BugID", "标题", "严重", "状态", "归属", "任务", "原因", "复盘建议"],
+        lines.append(
+            md_table(
+                ["BugID", "标题", "缺陷等级", "责任部门", "归属类型", "复盘建议", "可能原因"],
+                [
                     [
-                        [
-                            row.get("id"),
-                            trim_text(row.get("title"), 46),
-                            row.get("severity"),
-                            row.get("status"),
-                            row.get("ownerDeptName") or row.get("type"),
-                            trim_text(row.get("task_name"), 28),
-                            trim_text(row.get("causeAnalysis") or row.get("dept_review"), 30),
-                            bug_review_suggestion(row),
-                        ]
-                        for row in external[:50]
-                    ],
-                ),
-            ]
+                        row.get("id"),
+                        trim_text(row.get("title"), 44),
+                        bug_severity_text(row.get("severity")),
+                        row.get("ownerDeptName") or row.get("type") or "未填写",
+                        bug_boundary_state(row),
+                        bug_review_suggestion(row),
+                        trim_text(row.get("causeAnalysis") or row.get("dept_review"), 40),
+                    ]
+                    for row in external[:50]
+                ],
+            )
         )
+    else:
+        lines.append("本版本没有外部 Bug 责任界定候选。")
 
+    lines.extend(["", "---", "", f"## 四、内部 Bug 责任界定（{len(internal)} 条）", ""])
     if internal:
-        lines.extend(
-            [
-                "",
-                "## 五、内部Bug界定候选",
-                "",
-                md_table(
-                    ["BugID", "标题", "分类", "严重", "典型", "归属", "任务", "复盘建议"],
+        lines.append(
+            md_table(
+                ["BugID", "标题", "缺陷等级", "分类", "责任部门", "归属类型", "关联任务", "复盘建议"],
+                [
                     [
-                        [
-                            row.get("id"),
-                            trim_text(row.get("title"), 46),
-                            bug_classification_label(row.get("classification")),
-                            row.get("severity"),
-                            "是" if str(row.get("isTypical")) == "1" else "",
-                            row.get("ownerDeptName") or row.get("type"),
-                            trim_text(row.get("task_name"), 28),
-                            bug_review_suggestion(row),
-                        ]
-                        for row in internal[:50]
-                    ],
-                ),
-            ]
+                        row.get("id"),
+                        trim_text(row.get("title"), 42),
+                        bug_severity_text(row.get("severity")),
+                        bug_classification_label(row.get("classification")),
+                        row.get("ownerDeptName") or row.get("type") or "未填写",
+                        bug_boundary_state(row),
+                        trim_text(row.get("task_name"), 30),
+                        bug_review_suggestion(row),
+                    ]
+                    for row in internal[:50]
+                ],
+            )
         )
+    else:
+        lines.append("本版本没有内部 Bug 责任界定候选。")
 
+    lines.extend(["", "---", "", f"## 五、低质量任务（{len(low_quality)} 个）", ""])
     if low_quality:
-        lines.extend(
-            [
-                "",
-                "## 六、低质量任务候选",
-                "",
-                md_table(
-                    ["任务ID", "任务", "负责人", "Bug数", "外部", "内部", "关键", "关联Bug"],
+        lines.append(
+            md_table(
+                ["任务ID", "任务", "负责人", "Bug数", "外部", "内部", "关键", "关联Bug"],
+                [
                     [
-                        [
-                            row.get("task_id"),
-                            trim_text(row.get("task_name"), 46),
-                            row.get("task_assignedName") or row.get("task_assignedTo"),
-                            serialize(row.get("bug_count")),
-                            serialize(row.get("external_bug_count")),
-                            serialize(row.get("internal_bug_count")),
-                            serialize(row.get("key_bug_count")),
-                            trim_text(row.get("bug_ids"), 34),
-                        ]
-                        for row in low_quality
-                    ],
-                ),
-            ]
+                        row.get("task_id"),
+                        trim_text(row.get("task_name"), 46),
+                        row.get("task_assignedName") or row.get("task_assignedTo"),
+                        serialize(row.get("bug_count")),
+                        serialize(row.get("external_bug_count")),
+                        serialize(row.get("internal_bug_count")),
+                        serialize(row.get("key_bug_count")),
+                        trim_text(row.get("bug_ids"), 34),
+                    ]
+                    for row in low_quality
+                ],
+            )
         )
+    else:
+        lines.append("本版本没有达到低质量任务阈值的候选。")
 
-    lines.extend(
-        [
-            "",
-            "## 七、口径纠偏",
-            "",
-            "- Bug界定是复盘前预分类，不等同于正式版本复盘。",
-            "- 疑似非Bug只按显式标记 `type='performance'` 进入，不再把原因不清的 Bug 直接剔除。",
-            "- 部门展示优先将 `zt_bug.ownerDept` 数字 ID 映射到 `zt_dept.name`，避免报告出现部门编号。",
-        ]
-    )
+    if ops:
+        lines.extend(["", "### 运维Bug补充", "", md_table(["BugID", "标题", "状态", "归属"], [[row.get("id"), trim_text(row.get("title"), 48), row.get("status"), row.get("ownerDeptName") or row.get("type")] for row in ops[:20]])])
+
     return "\n".join(lines) + "\n"
 
 
@@ -1114,175 +1074,310 @@ def render_version_review_report(payload: dict[str, Any]) -> str:
     version_payload = payload.get("version_delay") or {}
     version = version_payload.get("version") or {}
     summary = version_payload.get("summary") or {}
-    pool_delay = version_payload.get("pool_delay") or {}
     demand_summary = (payload.get("demand_summary") or {}).get("summary") or {}
-    demand_status = (payload.get("demand_summary") or {}).get("status") or []
     bug_boundary = payload.get("bug_boundary") or {}
     bug_summary = bug_boundary.get("summary", {}).get("summary") or {}
     buckets = bug_boundary.get("buckets") or {}
+    external = buckets.get("external") or []
+    internal = buckets.get("internal") or []
+    nonbug = buckets.get("nonbug") or []
     low_quality = bug_boundary.get("low_quality_tasks") or []
     trends = payload.get("trends") or []
     overdue = version_payload.get("overdue_open") or []
     finished_late = version_payload.get("finished_late") or []
     marked_delay = version_payload.get("marked_delay") or []
 
+    version_name = str(version.get("name") or payload.get("version_id") or "未知版本")
+    review_internal = [
+        row for row in internal if row.get("severity") in {1, 2} or str(row.get("isTypical")) == "1"
+    ] or internal[:10]
+
+    def count_by_dept(rows: list[dict[str, Any]]) -> list[list[str]]:
+        counts: dict[str, int] = {}
+        for row in rows:
+            dept = row.get("ownerDeptName") or row.get("ownerDept") or row.get("type") or "未填写"
+            counts[dept] = counts.get(dept, 0) + 1
+        return [[dept, serialize(count)] for dept, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))]
+
+    def append_deep_analysis(lines_ref: list[str], rows: list[dict[str, Any]], prefix: str = "深度分析") -> None:
+        for index, row in enumerate(rows[:6], 1):
+            lines_ref.extend(
+                [
+                    "",
+                    f"### {prefix}（{index}）",
+                    "",
+                    f"# {trim_text(row.get('title'), 80)}",
+                    "",
+                    f"**BugID：** {row.get('id')}",
+                    f"**Bug现象：** {trim_text(row.get('phenomenon') or row.get('title'), 160)}",
+                    f"**缺陷等级：** {bug_severity_text(row.get('severity'))}",
+                    f"**责任部门：** {row.get('ownerDeptName') or row.get('ownerDept') or row.get('type') or '未填写'}",
+                    f"**可能原因：** {trim_text(row.get('causeAnalysis') or row.get('dept_review') or '【待补充·人工】', 180)}",
+                    f"**举措：** {trim_text(row.get('nextStep') or '【待补充·人工】', 180)}",
+                    "",
+                    "---",
+                ]
+            )
+
+    high_internal = [row for row in internal if row.get("severity") in {1, 2}]
+    bug_type_counts: dict[str, dict[str, Any]] = {}
+    for row in high_internal:
+        label = str(row.get("bugType") or row.get("bugTypeParent") or "原因待确认")
+        dept = row.get("ownerDeptName") or row.get("ownerDept") or row.get("type") or "未填写"
+        if label not in bug_type_counts:
+            bug_type_counts[label] = {"count": 0, "depts": {}}
+        bug_type_counts[label]["count"] += 1
+        bug_type_counts[label]["depts"][dept] = bug_type_counts[label]["depts"].get(dept, 0) + 1
+
     lines = [
-        f"# 版本复盘：{version.get('name') or payload.get('version_id')}",
+        f"# {version_name}版本复盘",
         "",
-        f"复盘日期：{serialize(payload.get('as_of'))}",
-        f"版本周期：{serialize(version.get('begin'))} ~ {serialize(version.get('end'))}",
+        f"**部门：** 效能组、测试组 **复盘时间：** {serialize(payload.get('as_of'))}",
         "",
-        "## 一、复盘结论",
+        "---",
         "",
-        f"- 版本任务：{serialize(summary.get('total_tasks', 0))} 个；未关闭：{serialize(summary.get('open_tasks', 0))} 个。",
-        f"- 版本需求：{serialize(demand_summary.get('total_demands', 0))} 条；未关联任务：{serialize(demand_summary.get('without_task', 0))} 条。",
-        f"- Bug总数：{serialize(bug_summary.get('total_bugs', 0))} 条；active：{serialize(bug_summary.get('active_bugs', 0))} 条；高严重active：{serialize(bug_summary.get('active_high_bugs', 0))} 条。",
-        f"- 外部Bug候选：{len(buckets.get('external') or [])} 条；内部Bug候选：{len(buckets.get('internal') or [])} 条；疑似非Bug：{len(buckets.get('nonbug') or [])} 条。",
-        f"- 当前逾期未完成：{len(overdue)} 个；已完成但晚于截止：{len(finished_late)} 个；显式标记延期：{len(marked_delay)} 个。",
+        "## 一、外部Bug复盘",
+        "",
+        f"### 1.1 {version_name} 外部Bug概览",
+        "",
+        "**外部Bug数量趋势：**",
+        "",
+        md_table(
+            ["版本", "外部Bug", "疑似非Bug", "全部Bug"],
+            [
+                [
+                    row.get("name"),
+                    serialize(row.get("external_bugs", 0)),
+                    serialize(row.get("nonbug_bugs", 0)),
+                    serialize(row.get("bugs", 0)),
+                ]
+                for row in trends
+            ] or [[version_name, len(external), len(nonbug), serialize(bug_summary.get("total_bugs", 0))]],
+        ),
+        "",
+        f"**当前版本Bug数：** {len(external)}",
+        f"**外部Bug反馈总数：** {len(external) + len(nonbug)}",
+        "",
+        f"**结论：** {version_name} 外部Bug候选 {len(external)} 条，疑似非Bug {len(nonbug)} 条。",
+        "",
+        "### 1.2 外部Bug 非Bug剔除列表",
+        "",
     ]
 
-    if trends:
-        lines.extend(
-            [
-                "",
-                "## 二、版本趋势",
-                "",
-                md_table(
-                    ["版本", "周期", "需求", "任务", "未关闭任务", "Bug", "active Bug", "高严重 active"],
+    if nonbug:
+        lines.append(
+            md_table(
+                ["序号", "BugID", "Bug标题", "剔除原因"],
+                [
                     [
-                        [
-                            row.get("name"),
-                            f"{serialize(row.get('begin'))}~{serialize(row.get('end'))}",
-                            serialize(row.get("demands")),
-                            serialize(row.get("tasks")),
-                            serialize(row.get("open_tasks")),
-                            serialize(row.get("bugs")),
-                            serialize(row.get("active_bugs")),
-                            serialize(row.get("high_active_bugs")),
-                        ]
-                        for row in trends
-                    ],
-                ),
-            ]
+                        index,
+                        row.get("id"),
+                        trim_text(row.get("title"), 56),
+                        trim_text(row.get("causeAnalysis") or bug_review_suggestion(row), 50),
+                    ]
+                    for index, row in enumerate(nonbug, 1)
+                ],
+            )
         )
+    else:
+        lines.append("本版本没有按字段识别到疑似非Bug。")
 
     lines.extend(
         [
             "",
-            "## 三、Bug复盘",
+            f"**结论：** 当前版本外部共产生 {len(external) + len(nonbug)} 条候选，其中 {len(nonbug)} 条按字段识别为疑似非Bug。",
             "",
-            "### 3.1 外部Bug候选",
-            "",
-            md_table(
-                ["BugID", "标题", "严重", "状态", "归属", "任务", "原因", "建议"],
-                [
-                    [
-                        row.get("id"),
-                        trim_text(row.get("title"), 44),
-                        row.get("severity"),
-                        row.get("status"),
-                        row.get("ownerDeptName") or row.get("type"),
-                        trim_text(row.get("task_name"), 24),
-                        trim_text(row.get("causeAnalysis") or row.get("dept_review"), 30),
-                        bug_review_suggestion(row),
-                    ]
-                    for row in (buckets.get("external") or [])[:40]
-                ],
-            ),
-            "",
-            "### 3.2 内部Bug候选",
+            "### 1.3 外部Bug 实际复盘Bug列表",
             "",
             md_table(
-                ["BugID", "标题", "分类", "严重", "典型", "归属", "任务", "建议"],
+                ["序号", "BugID", "Bug标题", "缺陷等级/影响", "Bug现象", "责任部门"],
                 [
                     [
+                        index,
                         row.get("id"),
-                        trim_text(row.get("title"), 44),
-                        bug_classification_label(row.get("classification")),
-                        row.get("severity"),
-                        "是" if str(row.get("isTypical")) == "1" else "",
-                        row.get("ownerDeptName") or row.get("type"),
-                        trim_text(row.get("task_name"), 24),
-                        bug_review_suggestion(row),
+                        trim_text(row.get("title"), 48),
+                        bug_severity_text(row.get("severity")),
+                        trim_text(row.get("phenomenon") or row.get("title"), 42),
+                        row.get("ownerDeptName") or row.get("ownerDept") or row.get("type") or "未填写",
                     ]
-                    for row in (buckets.get("internal") or [])[:40]
-                ],
+                    for index, row in enumerate(external, 1)
+                ] or [["-", "-", "本版本没有外部复盘Bug", "-", "-", "-"]],
             ),
+            "",
+            f"**结论：** 当前版本对 {len(external)} 条外部Bug进行复盘候选识别。",
+            "",
+            f"### 1.4 {version_name} 外部Bug责任归属 — 测试组",
+            "",
+            "测试组相关责任需结合复盘会确认；当前工具先保留字段中已有的归属和部门复盘信息。",
+            "",
+            f"### 1.5 {version_name} 外部Bug责任归属 — 其它部门",
+            "",
+            md_table(["部门", "Bug数量"], count_by_dept(external) or [["无", "0"]]),
         ]
     )
-
-    if low_quality:
-        lines.extend(
-            [
-                "",
-                "### 3.3 低质量任务候选",
-                "",
-                md_table(
-                    ["任务ID", "任务", "负责人", "Bug数", "外部", "内部", "关键", "关联Bug"],
-                    [
-                        [
-                            row.get("task_id"),
-                            trim_text(row.get("task_name"), 42),
-                            row.get("task_assignedName") or row.get("task_assignedTo"),
-                            serialize(row.get("bug_count")),
-                            serialize(row.get("external_bug_count")),
-                            serialize(row.get("internal_bug_count")),
-                            serialize(row.get("key_bug_count")),
-                            trim_text(row.get("bug_ids"), 30),
-                        ]
-                        for row in low_quality[:20]
-                    ],
-                ),
-            ]
-        )
-
+    append_deep_analysis(lines, external[:3])
     lines.extend(
         [
             "",
-            "## 四、版本交付复盘",
+            "### 1.6 外部Bug复盘总结 核心管理问题",
             "",
             md_table(
-                ["版本需求", "已关联任务", "未关联任务", "需求延期原因已填", "需求延期举措已填"],
+                ["序号", "管理问题类别", "涉及Bug", "涉及部门", "待办项"],
                 [
                     [
-                        serialize(demand_summary.get("total_demands", 0)),
-                        serialize(demand_summary.get("with_task", 0)),
-                        serialize(demand_summary.get("without_task", 0)),
-                        serialize(demand_summary.get("delay_reason_count", 0)),
-                        serialize(demand_summary.get("delay_measure_count", 0)),
+                        index,
+                        trim_text(row.get("causeAnalysis") or "原因待填写（待确认）", 34),
+                        row.get("id"),
+                        row.get("ownerDeptName") or row.get("ownerDept") or row.get("type") or "未填写",
+                        trim_text(row.get("nextStep") or "【待补充·人工】", 38),
                     ]
-                ],
+                    for index, row in enumerate(external[:20], 1)
+                ] or [["-", "本版本无外部复盘Bug", "-", "-", "-"]],
             ),
+            "",
+            "---",
+            "",
+            "## 二、内部Bug复盘",
+            "",
+            f"### 2.1 {version_name} 内部Bug概览",
+            "",
+            "**内部Bug数量趋势：**",
+            "",
+            md_table(
+                ["版本", "内部Bug总数", "全部Bug"],
+                [[row.get("name"), serialize(row.get("internal_bugs", 0)), serialize(row.get("bugs", 0))] for row in trends]
+                or [[version_name, len(internal), serialize(bug_summary.get("total_bugs", 0))]],
+            ),
+            "",
+            f"**当前版本内部Bug总数：** {len(internal)}",
+            "",
+            "### 2.2 内部Bug 重要缺陷分布",
+            "",
+            md_table(["部门", "高/极严重Bug数量"], count_by_dept(high_internal) or [["本版本无高/极严重内部Bug", "0"]]),
+            "",
+            "### 2.3 内部Bug 高缺陷Bug类型分析",
+            "",
+            md_table(
+                ["序号", "Bug类型", "涉及部门"],
+                [
+                    [
+                        index,
+                        f"{label}（{info['count']}条）",
+                        "、".join(f"{dept}（{count}）" for dept, count in info["depts"].items()),
+                    ]
+                    for index, (label, info) in enumerate(
+                        sorted(bug_type_counts.items(), key=lambda item: (-item[1]["count"], item[0])),
+                        1,
+                    )
+                ]
+                or [["-", "本版本无高缺陷内部Bug类型", "-"]],
+            ),
+            "",
+            "### 2.4 复盘Bug列表（高缺陷Bug+典型Bug）",
+            "",
+            md_table(
+                ["序号", "BugID", "Bug标题", "缺陷等级", "责任部门", "归属类型"],
+                [
+                    [
+                        index,
+                        row.get("id"),
+                        trim_text(row.get("title"), 50),
+                        bug_severity_text(row.get("severity")),
+                        row.get("ownerDeptName") or row.get("ownerDept") or row.get("type") or "未填写",
+                        bug_boundary_state(row),
+                    ]
+                    for index, row in enumerate(review_internal, 1)
+                ] or [["-", "-", "本版本没有高缺陷或典型内部Bug", "-", "-", "-"]],
+            ),
+            "",
+            "### 内部Bug 典型Bug复盘",
         ]
     )
-    if demand_status:
-        lines.extend(["", "### 需求状态分布", "", md_table(["状态", "数量"], [[row.get("status"), serialize(row.get("count"))] for row in demand_status])])
-    if overdue or finished_late or marked_delay:
-        lines.extend(
-            [
-                "",
-                "### 延期与风险记录",
-                "",
-                f"- 当前逾期未完成：{len(overdue)} 个。",
-                f"- 已完成但晚于截止：{len(finished_late)} 个。",
-                f"- 显式标记延期：{len(marked_delay)} 个。",
-            ]
-        )
-
+    append_deep_analysis(lines, review_internal)
     lines.extend(
         [
             "",
-            "## 五、需要人工确认",
+            "### 2.5 低质量任务分析",
             "",
-            "- 复盘会最终责任归属与管理动作。",
-            "- 字段为空的 Bug 现象、影响范围、原因和举措。",
-            "- 过程延期的真实原因，尤其是延期字段未填写或只填写在会议纪要中的情况。",
+            md_table(
+                ["任务ID", "任务名称", "Bug数", "含高/典型", "负责人", "管理判断"],
+                [
+                    [
+                        row.get("task_id"),
+                        trim_text(row.get("task_name"), 44),
+                        serialize(row.get("bug_count")),
+                        serialize(row.get("key_bug_count")),
+                        row.get("task_assignedName") or row.get("task_assignedTo"),
+                        "提测质量需关注；Bug较集中，建议加强自测和用例覆盖。",
+                    ]
+                    for row in low_quality[:20]
+                ] or [["-", "本版本没有达到低质量任务阈值的候选", "0", "0", "-", "-"]],
+            ),
             "",
-            "## 六、口径纠偏",
+            "### 2.6 测试组不可容忍的Bug类型总结",
             "",
-            "- 版本范围按 `zt_task.execution=版本ID` 与 `zt_pool.type=0 AND zt_pool.pv_id=版本ID` 取数。",
-            "- 延期判断优先使用 `zt_task.deadline/finishedDate/delayTimes/delayReason`，不再用需求池 `deliveryDate` 代替任务截止时间。",
-            "- Bug界定和版本复盘分开：Bug界定是会前预分类，版本复盘是正式复盘材料。",
+            md_table(
+                ["Bug类型", "本版本数量", "判定标准"],
+                [["需求不明确/原因待确认", len([row for row in internal if not row.get("causeAnalysis") and not row.get("dept_review")]), "字段缺少原因或部门复盘信息，复盘会需补齐"]],
+            ),
+            "",
+            "---",
+            "",
+            "## 三、版本复盘",
+            "",
+            "### 3.1 版本需求趋势",
+            "",
+            md_table(
+                ["版本", "需求", "任务", "未关闭任务", "Bug"],
+                [
+                    [
+                        row.get("name"),
+                        serialize(row.get("demands")),
+                        serialize(row.get("tasks")),
+                        serialize(row.get("open_tasks")),
+                        serialize(row.get("bugs")),
+                    ]
+                    for row in trends
+                ]
+                or [[version_name, serialize(demand_summary.get("total_demands", 0)), serialize(summary.get("total_tasks", 0)), serialize(summary.get("open_tasks", 0)), serialize(bug_summary.get("total_bugs", 0))]],
+            ),
+            "",
+            f"**版本概况：** 本版本需求 {serialize(demand_summary.get('total_demands', 0))} 项，任务 {serialize(summary.get('total_tasks', 0))} 个，未关闭任务 {serialize(summary.get('open_tasks', 0))} 个。",
+            "",
+            "### 3.2 延期情况",
+            "",
+            f"**当前版本过程延期总数：** 当前逾期未完成 {len(overdue)} 个，已完成但晚于截止 {len(finished_late)} 个，显式标记延期 {len(marked_delay)} 个。",
+            "",
+            "### 3.3 延期任务记录",
+            "",
+            md_table(
+                ["序号", "延期任务标题", "任务来源", "延期次数", "负责人", "截止时间", "延期判断"],
+                [
+                    [
+                        index,
+                        trim_text(row.get("name"), 50),
+                        trim_text(row.get("root_name"), 28),
+                        serialize(row.get("delayTimes") or ""),
+                        row.get("assignedName") or row.get("assignedTo"),
+                        serialize(row.get("deadline")),
+                        f"逾期 {serialize(row.get('overdue_days'))} 天" if row.get("overdue_days") else "字段标记延期",
+                    ]
+                    for index, row in enumerate((overdue + marked_delay)[:30], 1)
+                ] or [["-", "本版本没有查到延期任务记录", "-", "-", "-", "-", "-"]],
+            ),
+            "",
+            "### 3.4 上周复盘待办项",
+            "",
+            md_table(
+                ["序号", "待办", "部门", "截止时间"],
+                [["【待补充·人工】", "【待补充·人工】", "【待补充·人工】", "【待补充·人工】"]],
+            ),
+            "",
+            "---",
+            "",
+            "## THANK YOU",
+            "",
+            "复盘时间：【待补充·人工】",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -1483,4 +1578,231 @@ def render_weekly_report(payload: dict[str, Any]) -> str:
                 ),
             ]
         )
+    return "\n".join(lines) + "\n"
+
+
+def _weekly_version_snapshot(
+    repo: ZentaoRepository,
+    sprint: dict[str, Any] | None,
+    as_of: dt.date,
+) -> dict[str, Any] | None:
+    if not sprint:
+        return None
+    version_id = int(sprint["id"])
+    return {
+        "sprint": sprint,
+        "task_summary": repo.get_version_task_summary(version_id, as_of),
+        "demand_summary": repo.get_version_demand_summary(version_id),
+        "bug_summary": repo.get_bug_summary(version_id, as_of),
+    }
+
+
+def build_weekly_summary_payload(
+    repo: ZentaoRepository,
+    start_date: dt.date,
+    end_date: dt.date,
+    as_of: dt.date,
+    projects: list[dict[str, str]] | None = None,
+    include_history: bool = True,
+) -> dict[str, Any]:
+    project_specs = projects or [
+        {"key": "platform", "label": "平台项目", "product_name": "平台部", "project_name": "平台部"},
+        {"key": "game", "label": "游戏项目", "product_name": "游戏部", "project_name": "游戏部"},
+    ]
+    project_payloads: list[dict[str, Any]] = []
+    warnings: list[str] = []
+
+    for spec in project_specs:
+        product_name = spec["product_name"]
+        project_name = spec["project_name"]
+        current = repo.get_current_sprint_for_product(product_name, as_of, project_name)
+        previous = repo.get_latest_completed_sprint_for_product(product_name, as_of, project_name) if include_history else None
+        next_sprint = repo.get_next_sprint_for_product(product_name, as_of, project_name) if include_history else None
+        current_weekly = repo.get_weekly_report_data(int(current["id"]), start_date, end_date, as_of) if current else None
+        if not current:
+            warnings.append(f"{spec['label']}未定位到当前版本")
+        project_payloads.append(
+            {
+                **spec,
+                "previous": _weekly_version_snapshot(repo, previous, as_of),
+                "current": _weekly_version_snapshot(repo, current, as_of),
+                "next": _weekly_version_snapshot(repo, next_sprint, as_of),
+                "weekly": current_weekly,
+            }
+        )
+
+    return {
+        "ok": any(project.get("current") for project in project_payloads),
+        "start_date": start_date,
+        "end_date": end_date,
+        "as_of": as_of,
+        "projects": project_payloads,
+        "warnings": warnings,
+    }
+
+
+def _snapshot_summary(snapshot: dict[str, Any] | None) -> dict[str, Any]:
+    if not snapshot:
+        return {}
+    return (snapshot.get("task_summary") or {}).get("summary") or {}
+
+
+def _snapshot_demand(snapshot: dict[str, Any] | None) -> dict[str, Any]:
+    if not snapshot:
+        return {}
+    return (snapshot.get("demand_summary") or {}).get("summary") or {}
+
+
+def _snapshot_bug(snapshot: dict[str, Any] | None) -> dict[str, Any]:
+    if not snapshot:
+        return {}
+    return (snapshot.get("bug_summary") or {}).get("summary") or {}
+
+
+def render_weekly_summary_report(payload: dict[str, Any], report_type: str = "summary") -> str:
+    if not payload.get("ok"):
+        warnings = "；".join(payload.get("warnings") or [])
+        return f"周汇总生成失败：{warnings or '没有定位到当前版本。'}\n"
+
+    title = "效能周报" if report_type == "report" else "效能周汇总"
+    lines = [
+        f"# {title}（{serialize(payload.get('start_date'))} ~ {serialize(payload.get('end_date'))}）",
+        "",
+        f"生成日期：{serialize(payload.get('as_of'))}",
+        "",
+        "## 一、总体结论",
+        "",
+    ]
+
+    conclusion_rows = []
+    for project in payload.get("projects") or []:
+        current = project.get("current")
+        weekly = project.get("weekly") or {}
+        sprint = (current or {}).get("sprint") or {}
+        task_summary = _snapshot_summary(current)
+        bug_summary = _snapshot_bug(current)
+        next_sprint = ((project.get("next") or {}).get("sprint") or {}).get("name") or ""
+        conclusion_rows.append(
+            [
+                project.get("label"),
+                sprint.get("name") or "未定位",
+                serialize(task_summary.get("total_tasks", 0)),
+                serialize(task_summary.get("open_tasks", 0)),
+                len(weekly.get("overdue_open") or []),
+                serialize(bug_summary.get("active_bugs", 0)),
+                next_sprint,
+            ]
+        )
+
+    lines.extend(
+        [
+            md_table(["项目", "当前版本", "任务数", "未关闭", "逾期未完成", "Active Bug", "下一版本"], conclusion_rows),
+            "",
+            "## 二、项目版本状态",
+        ]
+    )
+
+    for project in payload.get("projects") or []:
+        label = project.get("label")
+        previous = project.get("previous")
+        current = project.get("current")
+        next_snapshot = project.get("next")
+        weekly = project.get("weekly") or {}
+        lines.extend(["", f"### {label}", ""])
+
+        version_rows = []
+        for name, snapshot in [("上一版本", previous), ("当前版本", current), ("下一版本", next_snapshot)]:
+            sprint = (snapshot or {}).get("sprint") or {}
+            task_summary = _snapshot_summary(snapshot)
+            demand_summary = _snapshot_demand(snapshot)
+            bug_summary = _snapshot_bug(snapshot)
+            version_rows.append(
+                [
+                    name,
+                    sprint.get("name") or "未定位",
+                    f"{serialize(sprint.get('begin'))} ~ {serialize(sprint.get('end'))}" if sprint else "",
+                    serialize(demand_summary.get("total_demands", 0)),
+                    serialize(task_summary.get("total_tasks", 0)),
+                    serialize(task_summary.get("open_tasks", 0)),
+                    serialize(bug_summary.get("total_bugs", 0)),
+                ]
+            )
+        lines.append(md_table(["版本", "名称", "周期", "需求", "任务", "未关闭任务", "Bug"], version_rows))
+
+        if current:
+            task_flow = weekly.get("weekly_task_flow") or {}
+            bug_flow = weekly.get("weekly_bug_flow") or {}
+            lines.extend(
+                [
+                    "",
+                    "#### 本周推进",
+                    "",
+                    md_table(
+                        ["新建任务", "完成任务", "关闭任务", "新增Bug", "解决Bug", "关闭Bug"],
+                        [
+                            [
+                                serialize(task_flow.get("opened", 0)),
+                                serialize(task_flow.get("finished", 0)),
+                                serialize(task_flow.get("closed_count", 0)),
+                                serialize(bug_flow.get("opened", 0)),
+                                serialize(bug_flow.get("resolved", 0)),
+                                serialize(bug_flow.get("closed_count", 0)),
+                            ]
+                        ],
+                    ),
+                ]
+            )
+            overdue = weekly.get("overdue_open") or []
+            if overdue:
+                lines.extend(
+                    [
+                        "",
+                        "#### 延期风险",
+                        "",
+                        md_table(
+                            ["任务ID", "所属需求", "任务", "负责人", "截止", "逾期", "剩余工时"],
+                            [
+                                [
+                                    row.get("id"),
+                                    trim_text(row.get("root_name"), 28),
+                                    trim_text(row.get("name"), 42),
+                                    row.get("assignedName") or row.get("assignedTo"),
+                                    serialize(row.get("deadline")),
+                                    f"{serialize(row.get('overdue_days'))}天",
+                                    serialize(row.get("left")),
+                                ]
+                                for row in overdue[:20]
+                            ],
+                        ),
+                    ]
+                )
+
+    lines.extend(
+        [
+            "",
+            "## 三、重点风险与下周关注",
+            "",
+            md_table(
+                ["项目", "关注点", "建议动作"],
+                [
+                    [
+                        project.get("label"),
+                        "延期任务、Active Bug、下一版本未关闭任务",
+                        "周会优先确认延期任务责任人、Bug收敛计划和下版本准备状态。",
+                    ]
+                    for project in payload.get("projects") or []
+                ],
+            ),
+            "",
+            "## 四、专题进展（待补充）",
+            "",
+            "| 专题 | 当前状态 | 需要补充 |\n| --- | --- | --- |\n| Web5 / 性能 / AI / 招聘等专项 | 【待补充·人工】 | 请结合非禅道信息补充 |",
+            "",
+            "## 五、下周关注",
+            "",
+            "- 当前版本剩余任务和延期项是否能在发布日前收敛。",
+            "- 下一版本需求是否已下单、是否存在未关联任务或负责人未明确的项目。",
+            "- Active Bug 是否存在高严重级别、跨部门争议或需要复盘会提前确认的事项。",
+        ]
+    )
     return "\n".join(lines) + "\n"

@@ -1188,6 +1188,14 @@ class ZentaoRepository:
         }
 
     def get_bug_boundary(self, version_id: int, limit: int = 160) -> dict[str, Any]:
+        version = self.db.fetch_one(
+            """
+            SELECT id, name, begin, end, status
+            FROM zt_project
+            WHERE id = %s
+            """,
+            (version_id,),
+        )
         summary = self.get_bug_summary(version_id, dt.date.today())
         bugs = self.db.fetch_all(
             """
@@ -1292,6 +1300,7 @@ class ZentaoRepository:
             (version_id,),
         )
         return {
+            "version": version,
             "summary": summary,
             "bugs": self._normalize_bug_owner_depts(bugs),
             "low_quality_tasks": low_quality_tasks,
@@ -1310,6 +1319,18 @@ class ZentaoRepository:
             task_summary = self.get_version_task_summary(version_id, as_of).get("summary") or {}
             bug_summary = self.get_bug_summary(version_id, as_of).get("summary") or {}
             demand_summary = self.get_version_demand_summary(version_id).get("summary") or {}
+            bug_classification = self.db.fetch_one(
+                """
+                SELECT
+                  SUM(IF(classification IN ('1','2') AND type <> 'performance', 1, 0)) AS external_bugs,
+                  SUM(IF(classification IN ('4','5') AND type <> 'performance', 1, 0)) AS internal_bugs,
+                  SUM(IF(type = 'performance', 1, 0)) AS nonbug_bugs
+                FROM zt_bug
+                WHERE deleted = '0'
+                  AND execution = %s
+                """,
+                (version_id,),
+            ) or {}
             trends.append(
                 {
                     "id": version_id,
@@ -1322,6 +1343,9 @@ class ZentaoRepository:
                     "bugs": bug_summary.get("total_bugs", 0),
                     "active_bugs": bug_summary.get("active_bugs", 0),
                     "high_active_bugs": bug_summary.get("active_high_bugs", 0),
+                    "external_bugs": bug_classification.get("external_bugs", 0),
+                    "internal_bugs": bug_classification.get("internal_bugs", 0),
+                    "nonbug_bugs": bug_classification.get("nonbug_bugs", 0),
                 }
             )
         return trends

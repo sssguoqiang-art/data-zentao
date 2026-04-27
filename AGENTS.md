@@ -40,6 +40,7 @@ data-zentao dept-risk "部门关键词"
 data-zentao bug-review
 data-zentao bug-boundary
 data-zentao version-review
+data-zentao weekly-summary
 data-zentao measures
 data-zentao ask "平台项目这个版本产生的延期情况"
 data-zentao schema --table zt_task
@@ -65,3 +66,4 @@ docs/数据口径.md
 - 人员展示时优先用 `zt_user.realname`，不要直接把账号当姓名。
 - 日报/周报/复盘中的延期判断优先使用 `zt_task.deadline`、`finishedDate`、`delayTimes` 和 `delayReason`，不要用 `zt_pool.deliveryDate` 代替任务截止时间。
 - `bug-boundary` 是复盘前预分类材料；`version-review` 是正式版本复盘材料。用户只说“复盘”时，先确认要哪一种。
+- `daily-report`、`weekly-summary`、`bug-boundary`、`version-review` 的标题和章节结构已按旧版 bsg-zentao 输出对齐。生成周报类材料时，优先用 `weekly-summary`；它默认同时汇总平台项目和游戏项目。

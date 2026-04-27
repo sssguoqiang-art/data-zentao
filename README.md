@@ -205,8 +205,9 @@ data-zentao query --sql "SELECT id, name, status FROM zt_task WHERE deleted='0' 
 | 版本复盘 | 已封装 | 正式复盘材料：Bug复盘、版本趋势、需求和延期分析 |
 | 查待办举措 | 已封装 | 待办 `zt_to_do_list` 和举措 `zt_measures_management` |
 | 待办查询 | 已封装 | 未完成、进行中、未开始、全部待办 |
-| 今日报告 | 已封装 | 当前版本概况、下一版本预览、今日推进、延期风险、Bug、需求、待办 |
-| 周报 | 已封装 | 本周任务流转、Bug 流转、延期风险、待办 |
+| 今日报告 | 已封装 | 对齐旧版日报：当前版本发布核查、今日推进、延期关注、Bug、下一版本准备 |
+| 周汇总 / 周报 | 已封装 | 对齐旧版周报：默认汇总平台项目和游戏项目，生成效能周汇总/效能周报 |
+| 单项目周报 | 已封装 | 按指定项目输出本周任务流转、Bug 流转、延期风险、待办 |
 | 平台当前版本定位 | 已封装 | 默认按当天日期定位平台部当前 sprint |
 | 平台版本延期报告 | 已封装 | 当前逾期未完成、已完成延期、延期原因填写情况 |
 | 表结构查看 | 已封装 | `schema --table / --columns / --search` |
@@ -341,10 +342,13 @@ data-zentao bug-review
 data-zentao bug-boundary
 data-zentao version-review
 data-zentao daily-report
+data-zentao weekly-summary
 data-zentao weekly-report
 data-zentao platform-delay
 data-zentao version-delay --version-id 405
 ```
+
+说明：`weekly-summary` 是旧版周报能力，默认生成 `效能周汇总` 和 `效能周报` 两份文件；`weekly-report` 是单项目周报，适合只看一个项目时使用。
 
 ---
 
@@ -388,6 +392,7 @@ pip install -e .
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.6 | 2026-04-27 | 对齐旧版日报、双项目周汇总、Bug界定和版本复盘的输出结构与文件命名 |
 | v0.5 | 2026-04-27 | 同步旧版日报下一版本预览、Bug界定、版本复盘能力，并修正需求/任务截止口径 |
 | v0.4 | 2026-04-27 | 新增 `doctor` 安装自检，明确最终输出需经 AI 判断 |
 | v0.3 | 2026-04-27 | 补齐需求状态、个人任务、部门风险、Bug 复盘、待办举措、日报、周报等核心能力 |

@@ -12,7 +12,7 @@ from .reports import (
     build_measures_payload,
     build_person_work_payload,
     build_version_review_payload,
-    build_weekly_report_payload,
+    build_weekly_summary_payload,
     render_bug_boundary_report,
     render_bug_review_report,
     render_daily_report,
@@ -23,7 +23,7 @@ from .reports import (
     render_platform_delay_report,
     render_todo_report,
     render_version_review_report,
-    render_weekly_report,
+    render_weekly_summary_report,
 )
 from .repository import ZentaoRepository
 
@@ -103,8 +103,8 @@ def answer_question(
 
     if "周报" in text or "周汇总" in text:
         start = as_of - dt.timedelta(days=as_of.weekday())
-        payload = build_weekly_report_payload(repo, product_name, project_name, start, as_of, as_of)
-        return render_weekly_report(payload)
+        payload = build_weekly_summary_payload(repo, start, as_of, as_of)
+        return render_weekly_summary_report(payload, "report" if "周报" in text else "summary")
 
     if "举措" in text:
         payload = build_measures_payload(repo, "unfinished")
