@@ -825,6 +825,108 @@ class ZentaoRepository:
             "severity": severity_rows,
         }
 
+    def get_version_snapshot_summaries(self, version_ids: list[int], as_of: dt.date) -> dict[int, dict[str, Any]]:
+        ids = sorted({int(version_id) for version_id in version_ids if version_id})
+        if not ids:
+            return {}
+
+        placeholders = ", ".join(["%s"] * len(ids))
+
+        def number(value: object) -> int:
+            return int(value or 0)
+
+        result: dict[int, dict[str, Any]] = {
+            version_id: {
+                "task_summary": {"summary": {}},
+                "demand_summary": {"summary": {}},
+                "bug_summary": {"summary": {}},
+            }
+            for version_id in ids
+        }
+
+        task_rows = self.db.fetch_all(
+            f"""
+            SELECT
+              execution AS version_id,
+              COUNT(*) AS total_tasks,
+              SUM(IF(status NOT IN ('done','closed','cancel'), 1, 0)) AS open_tasks,
+              SUM(IF(
+                deadline IS NOT NULL
+                  AND deadline NOT IN ('0000-00-00')
+                  AND deadline < %s
+                  AND status NOT IN ('done','closed','cancel'),
+                1, 0
+              )) AS overdue_open,
+              SUM(IF(
+                finishedDate IS NOT NULL
+                  AND finishedDate NOT IN ('0000-00-00 00:00:00')
+                  AND deadline IS NOT NULL
+                  AND deadline NOT IN ('0000-00-00')
+                  AND DATE(finishedDate) > deadline,
+                1, 0
+              )) AS finished_late,
+              SUM(IF(TRIM(COALESCE(delayReason, '')) <> '', 1, 0)) AS delay_reason_count,
+              SUM(IF(COALESCE(delayTimes, 0) > 0, 1, 0)) AS delay_times_count
+            FROM zt_task
+            WHERE deleted = '0'
+              AND execution IN ({placeholders})
+            GROUP BY execution
+            """,
+            (as_of, *ids),
+        )
+        for row in task_rows:
+            version_id = number(row.get("version_id"))
+            if version_id in result:
+                result[version_id]["task_summary"] = {"summary": row}
+
+        demand_rows = self.db.fetch_all(
+            f"""
+            SELECT
+              pv_id AS version_id,
+              COUNT(*) AS total_demands,
+              SUM(IF(taskID > 0, 1, 0)) AS with_task,
+              SUM(IF(taskID = 0, 1, 0)) AS without_task,
+              SUM(IF(TRIM(COALESCE(delayReason, '')) <> '', 1, 0)) AS delay_reason_count,
+              SUM(IF(TRIM(COALESCE(delayMeasure, '')) <> '', 1, 0)) AS delay_measure_count
+            FROM zt_pool
+            WHERE deleted = '0'
+              AND type = 0
+              AND pv_id IN ({placeholders})
+            GROUP BY pv_id
+            """,
+            tuple(ids),
+        )
+        for row in demand_rows:
+            version_id = number(row.get("version_id"))
+            if version_id in result:
+                result[version_id]["demand_summary"] = {"summary": row}
+
+        bug_rows = self.db.fetch_all(
+            f"""
+            SELECT
+              execution AS version_id,
+              COUNT(*) AS total_bugs,
+              SUM(IF(status = 'active', 1, 0)) AS active_bugs,
+              SUM(IF(status = 'resolved', 1, 0)) AS resolved_bugs,
+              SUM(IF(status = 'closed', 1, 0)) AS closed_bugs,
+              SUM(IF(status = 'active' AND severity IN (1, 2), 1, 0)) AS active_high_bugs,
+              SUM(IF(DATE(openedDate) = %s, 1, 0)) AS opened_today,
+              SUM(IF(DATE(resolvedDate) = %s, 1, 0)) AS resolved_today,
+              SUM(IF(DATE(closedDate) = %s, 1, 0)) AS closed_today
+            FROM zt_bug
+            WHERE deleted = '0'
+              AND execution IN ({placeholders})
+            GROUP BY execution
+            """,
+            (as_of, as_of, as_of, *ids),
+        )
+        for row in bug_rows:
+            version_id = number(row.get("version_id"))
+            if version_id in result:
+                result[version_id]["bug_summary"] = {"summary": row}
+
+        return result
+
     def get_active_bugs(self, version_id: int, limit: int = 30) -> list[dict[str, Any]]:
         rows = self.db.fetch_all(
             """
@@ -1345,50 +1447,141 @@ class ZentaoRepository:
         as_of: dt.date,
         limit: int = 8,
     ) -> list[dict[str, Any]]:
+        sprints = list(reversed(self.get_recent_sprints_for_product(product_name, as_of, project_name, limit)))
+        if not sprints:
+            return []
+
+        version_ids = [int(sprint["id"]) for sprint in sprints]
+        placeholders = ", ".join(["%s"] * len(version_ids))
+
+        def number(value: object) -> int:
+            return int(value or 0)
+
+        task_rows = self.db.fetch_all(
+            f"""
+            SELECT
+              execution,
+              COUNT(*) AS total_tasks,
+              SUM(IF(status NOT IN ('done','closed','cancel'), 1, 0)) AS open_tasks
+            FROM zt_task
+            WHERE deleted = '0'
+              AND execution IN ({placeholders})
+            GROUP BY execution
+            """,
+            tuple(version_ids),
+        )
+        task_by_version = {number(row.get("execution")): row for row in task_rows}
+
+        bug_rows = self.db.fetch_all(
+            f"""
+            SELECT
+              execution,
+              COUNT(*) AS total_bugs,
+              SUM(IF(status = 'active', 1, 0)) AS active_bugs,
+              SUM(IF(status = 'active' AND severity IN (1, 2), 1, 0)) AS active_high_bugs,
+              SUM(IF(classification IN ('1','2') AND type <> 'performance', 1, 0)) AS external_bugs,
+              SUM(IF(classification IN ('4','5') AND type NOT IN ('performance','DDProblem'), 1, 0)) AS internal_bugs,
+              SUM(IF(classification IN ('4','5'), 1, 0)) AS internal_bugs_raw,
+              SUM(IF(classification IN ('1','2') AND type = 'performance', 1, 0)) AS nonbug_bugs,
+              SUM(IF(
+                classification IN ('1','2')
+                AND type <> 'performance'
+                AND FIND_IN_SET('45', REPLACE(ownerDept, ' ', '')) > 0,
+                1, 0
+              )) AS test_external_bugs
+            FROM zt_bug
+            WHERE deleted = '0'
+              AND execution IN ({placeholders})
+            GROUP BY execution
+            """,
+            tuple(version_ids),
+        )
+        bug_by_version = {number(row.get("execution")): row for row in bug_rows}
+
+        req_counts_by_version = {
+            version_id: {"version": 0, "operation": 0, "internal": 0}
+            for version_id in version_ids
+        }
+        pool_rows = self.db.fetch_all(
+            f"""
+            SELECT
+              p.pv_id AS version_id,
+              p.category,
+              COUNT(*) AS count
+            FROM zt_pool p
+            LEFT JOIN zt_task t ON t.id = p.taskID
+            WHERE p.deleted = '0'
+              AND p.type = 0
+              AND p.pv_id IN ({placeholders})
+              AND COALESCE(t.status, '') <> 'cancel'
+            GROUP BY p.pv_id, p.category
+            """,
+            tuple(version_ids),
+        )
+        missing_task_rows = self.db.fetch_all(
+            f"""
+            SELECT
+              t.execution AS version_id,
+              CASE
+                WHEN t.source = 'customer' THEN 'version'
+                WHEN t.source = 'operation' THEN 'operation'
+                ELSE 'internal'
+              END AS category,
+              COUNT(*) AS count
+            FROM zt_task t
+            LEFT JOIN zt_pool p
+              ON p.deleted = '0'
+              AND p.type = 0
+              AND p.pv_id = t.execution
+              AND p.taskID = t.id
+            WHERE t.deleted = '0'
+              AND t.execution IN ({placeholders})
+              AND t.parent <= 0
+              AND t.status <> 'cancel'
+              AND p.id IS NULL
+            GROUP BY
+              t.execution,
+              CASE
+                WHEN t.source = 'customer' THEN 'version'
+                WHEN t.source = 'operation' THEN 'operation'
+                ELSE 'internal'
+              END
+            """,
+            tuple(version_ids),
+        )
+        for row in [*pool_rows, *missing_task_rows]:
+            version_id = number(row.get("version_id"))
+            category = str(row.get("category") or "")
+            if version_id in req_counts_by_version and category in req_counts_by_version[version_id]:
+                req_counts_by_version[version_id][category] += number(row.get("count"))
+
         trends: list[dict[str, Any]] = []
-        for sprint in reversed(self.get_recent_sprints_for_product(product_name, as_of, project_name, limit)):
+        for sprint in sprints:
             version_id = int(sprint["id"])
-            task_summary = self.get_version_task_summary(version_id, as_of).get("summary") or {}
-            bug_summary = self.get_bug_summary(version_id, as_of).get("summary") or {}
-            req_counts = self.get_review_requirement_counts(version_id)
-            bug_classification = self.db.fetch_one(
-                """
-                SELECT
-                  SUM(IF(classification IN ('1','2') AND type <> 'performance', 1, 0)) AS external_bugs,
-                  SUM(IF(classification IN ('4','5') AND type NOT IN ('performance','DDProblem'), 1, 0)) AS internal_bugs,
-                  SUM(IF(classification IN ('4','5'), 1, 0)) AS internal_bugs_raw,
-                  SUM(IF(classification IN ('1','2') AND type = 'performance', 1, 0)) AS nonbug_bugs,
-                  SUM(IF(
-                    classification IN ('1','2')
-                    AND type <> 'performance'
-                    AND FIND_IN_SET('45', REPLACE(ownerDept, ' ', '')) > 0,
-                    1, 0
-                  )) AS test_external_bugs
-                FROM zt_bug
-                WHERE deleted = '0'
-                  AND execution = %s
-                """,
-                (version_id,),
-            ) or {}
+            task_summary = task_by_version.get(version_id) or {}
+            bug_summary = bug_by_version.get(version_id) or {}
+            req_counts = req_counts_by_version.get(version_id) or {}
+            ext_reqs = number(req_counts.get("version")) + number(req_counts.get("operation"))
+            int_reqs = number(req_counts.get("internal"))
             trends.append(
                 {
                     "id": version_id,
                     "name": sprint.get("name"),
                     "begin": sprint.get("begin"),
                     "end": sprint.get("end"),
-                    "tasks": task_summary.get("total_tasks", 0),
-                    "open_tasks": task_summary.get("open_tasks", 0),
-                    "demands": req_counts.get("total_reqs", 0),
-                    "ext_reqs": req_counts.get("ext_reqs", 0),
-                    "int_reqs": req_counts.get("int_reqs", 0),
-                    "bugs": bug_summary.get("total_bugs", 0),
-                    "active_bugs": bug_summary.get("active_bugs", 0),
-                    "high_active_bugs": bug_summary.get("active_high_bugs", 0),
-                    "external_bugs": bug_classification.get("external_bugs", 0),
-                    "internal_bugs": bug_classification.get("internal_bugs", 0),
-                    "internal_bugs_raw": bug_classification.get("internal_bugs_raw", 0),
-                    "nonbug_bugs": bug_classification.get("nonbug_bugs", 0),
-                    "test_external_bugs": bug_classification.get("test_external_bugs", 0),
+                    "tasks": number(task_summary.get("total_tasks")),
+                    "open_tasks": number(task_summary.get("open_tasks")),
+                    "demands": ext_reqs + int_reqs,
+                    "ext_reqs": ext_reqs,
+                    "int_reqs": int_reqs,
+                    "bugs": number(bug_summary.get("total_bugs")),
+                    "active_bugs": number(bug_summary.get("active_bugs")),
+                    "high_active_bugs": number(bug_summary.get("active_high_bugs")),
+                    "external_bugs": number(bug_summary.get("external_bugs")),
+                    "internal_bugs": number(bug_summary.get("internal_bugs")),
+                    "internal_bugs_raw": number(bug_summary.get("internal_bugs_raw")),
+                    "nonbug_bugs": number(bug_summary.get("nonbug_bugs")),
+                    "test_external_bugs": number(bug_summary.get("test_external_bugs")),
                 }
             )
         return trends

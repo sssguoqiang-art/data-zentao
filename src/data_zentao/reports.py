@@ -1988,6 +1988,8 @@ def build_weekly_summary_payload(
     ]
     project_payloads: list[dict[str, Any]] = []
     warnings: list[str] = []
+    prepared_projects: list[dict[str, Any]] = []
+    snapshot_ids: list[int] = []
 
     for spec in project_specs:
         product_name = spec["product_name"]
@@ -1998,12 +2000,42 @@ def build_weekly_summary_payload(
         current_weekly = repo.get_weekly_report_data(int(current["id"]), start_date, end_date, as_of) if current else None
         if not current:
             warnings.append(f"{spec['label']}未定位到当前版本")
-        project_payloads.append(
+        for sprint in [previous, current, next_sprint]:
+            if sprint:
+                snapshot_ids.append(int(sprint["id"]))
+        prepared_projects.append(
             {
                 **spec,
-                "previous": _weekly_version_snapshot(repo, previous, as_of),
-                "current": _weekly_version_snapshot(repo, current, as_of),
-                "next": _weekly_version_snapshot(repo, next_sprint, as_of),
+                "previous_sprint": previous,
+                "current_sprint": current,
+                "next_sprint": next_sprint,
+                "weekly": current_weekly,
+            }
+        )
+
+    snapshots = repo.get_version_snapshot_summaries(snapshot_ids, as_of)
+
+    def snapshot_for(sprint: dict[str, Any] | None, weekly: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        if not sprint:
+            return None
+        version_id = int(sprint["id"])
+        snapshot = {**(snapshots.get(version_id) or {}), "sprint": sprint}
+        if weekly:
+            snapshot["task_summary"] = weekly.get("task_summary") or snapshot.get("task_summary") or {}
+            snapshot["bug_summary"] = weekly.get("bug_summary") or snapshot.get("bug_summary") or {}
+        return snapshot
+
+    for prepared in prepared_projects:
+        current = prepared.get("current_sprint")
+        previous = prepared.get("previous_sprint")
+        next_sprint = prepared.get("next_sprint")
+        current_weekly = prepared.get("weekly")
+        project_payloads.append(
+            {
+                **{key: prepared[key] for key in ["key", "label", "product_name", "project_name"]},
+                "previous": snapshot_for(previous),
+                "current": snapshot_for(current, current_weekly),
+                "next": snapshot_for(next_sprint),
                 "weekly": current_weekly,
             }
         )
