@@ -28,7 +28,7 @@
 - 只能读数据，不能写数据。
 - 不要执行任何修改库结构或数据的 SQL。
 - 不要把数据库账号密码写入文件或回复。
-- 如果 `.env` 启用了 `DATA_ZENTAO_START_PASSWORD_SHA256`，首次运行查库或报告命令时会自动提示输入启动密码；也可以手动运行 `data-zentao unlock`。
+- 如果 `.env` 启用了 `DATA_ZENTAO_START_PASSWORD_SHA256`，首次运行查库或报告命令时会自动提示输入访问密码；也可以手动运行 `data-zentao unlock`。使用 `data-zentao setup` 初始化时会直接完成本机解锁。
 - 如果需要创建需求、生成任务、改状态，只能先生成草稿，不能直接写库。
 
 ## 常用命令

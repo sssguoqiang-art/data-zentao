@@ -37,7 +37,7 @@ class DbConfig:
         ]
         if missing:
             names = ", ".join(missing)
-            raise RuntimeError(f"缺少数据库配置：{names}。请先复制 .env.example 为 .env 并填写。")
+            raise RuntimeError(f"缺少数据库配置：{names}。请先运行 data-zentao setup 完成本机初始化。")
         return cls(
             host=os.environ["ZENTAO_DB_HOST"],
             port=int(os.getenv("ZENTAO_DB_PORT", "3306")),

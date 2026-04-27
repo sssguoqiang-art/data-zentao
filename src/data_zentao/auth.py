@@ -64,7 +64,7 @@ def unlock_with_password(password: str) -> bool:
 
 
 def prompt_unlock() -> bool:
-    password = getpass.getpass("请输入 data-zentao 启动密码：")
+    password = getpass.getpass("请输入 data-zentao 访问密码：")
     return unlock_with_password(password)
 
 
@@ -88,8 +88,8 @@ def ensure_unlocked() -> None:
         return
     if is_unlocked():
         return
-    print("首次使用 data-zentao 需要输入启动密码完成本机解锁。", flush=True)
+    print("首次使用 data-zentao 需要输入访问密码完成本机解锁。", flush=True)
     if prompt_unlock():
         print("data-zentao 已解锁。")
         return
-    raise RuntimeError("启动密码不正确。")
+    raise RuntimeError("访问密码不正确。")

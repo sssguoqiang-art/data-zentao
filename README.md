@@ -114,12 +114,24 @@ pip install -e .
 data-zentao setup
 ```
 
-按提示输入数据库地址、端口、账号、密码即可。向导会自动：
+按提示一次性输入以下信息：
+
+```text
+数据库地址
+数据库端口
+数据库账号
+数据库密码
+Git访问密码
+```
+
+说明：这里的“Git访问密码”用于 data-zentao 本机解锁，不是 GitHub 账号密码。输入后向导会自动完成本机解锁，后续 `data-zentao check` 不会再要求输入一次。
+
+向导会自动：
 
 - 在本机生成 `.env`
 - 写入数据库连接信息
 - 安装 Codex Skill
-- 保留默认启动密码门禁
+- 设置并完成本机访问解锁
 
 这些信息只会保存在本机，不会提交到 Git。
 
@@ -129,27 +141,28 @@ data-zentao setup
 cp .env.example .env
 ```
 
-然后编辑 `.env`：
+然后编辑 `.env`。通常只需要填写数据库连接四项，数据库名默认使用 `zentao`：
 
 ```text
 ZENTAO_DB_HOST=
-ZENTAO_DB_PORT=3306
+ZENTAO_DB_PORT=23306
 ZENTAO_DB_USER=
 ZENTAO_DB_PASSWORD=
-ZENTAO_DB_NAME=zentao
 ```
 
-### 第五步：首次解锁
+### 第五步：可选，查看或重置解锁状态
 
-`.env.example` 已经内置了统一启动密码的哈希。复制为 `.env` 后，首次使用前运行：
+如果使用 `data-zentao setup`，这一步可以跳过，因为初始化向导已经完成本机解锁。
+
+如果你是手工复制 `.env.example` 配置，首次使用前可以运行：
 
 ```bash
 data-zentao unlock
 ```
 
-然后输入启动密码。启动密码请向仓库管理员获取，不要写进 Git。
+然后输入访问密码。访问密码请向仓库管理员获取，不要写进 Git。
 
-如果忘了先运行 `unlock`，也没关系。首次执行 `data-zentao check`、`data-zentao ask` 或报告命令时，工具会自动提示输入启动密码并完成解锁。
+如果忘了先运行 `unlock`，也没关系。首次执行 `data-zentao check`、`data-zentao ask` 或报告命令时，工具会自动提示输入访问密码并完成解锁。
 
 解锁成功后，本机会保存一个本地授权文件，后续不用反复输入。需要重新锁定时运行：
 
@@ -163,9 +176,9 @@ data-zentao lock
 data-zentao auth-status
 ```
 
-说明：这个首次启动密码是本机门禁，用于防止误用和随手转发后直接运行；它不能替代 GitHub 私有仓库权限、数据库账号权限，也不应把明文密码写进 git。
+说明：这个访问密码是本机门禁，用于防止误用和随手转发后直接运行；它不能替代 GitHub 私有仓库权限、数据库账号权限，也不应把明文密码写进 git。
 
-如果你是管理员，后续想更换统一启动密码，可以运行：
+如果你是管理员，后续想更换统一访问密码，可以运行：
 
 ```bash
 data-zentao hash-password
@@ -190,7 +203,9 @@ data-zentao check
 
 ### 第七步：安装 Codex Skill（推荐）
 
-这一步不是运行 `data-zentao` 的硬性前置条件，但强烈建议 Codex 用户安装。
+如果你已经运行过 `data-zentao setup`，这一步可以跳过，因为 setup 已经自动安装了 Skill。
+
+如果你是手工配置 `.env`，建议再安装一次 Skill。
 
 原因是：`data-zentao` 负责查库，`zentao-data-assistant` Skill 负责让 Codex 记住正确字段口径、查询顺序和自检规则。安装后，后续即使不在本仓库目录里提问，Codex 也能先按 Skill 读取禅道数据库，不需要重新解释 `zt_pool`、`zt_task`、`zt_bug` 等字段关系。
 
@@ -495,9 +510,9 @@ data-zentao version-delay --version-id 405
 
 但如果希望在不同对话、不同目录里都能直接问禅道问题，建议安装 Skill。它能让 Codex 自动带上字段口径、查询规则和自检机制，避免重新沟通数据库结构。
 
-**Q：首次启动密码能替代 GitHub 私有仓库权限吗？**
+**Q：访问密码能替代 GitHub 私有仓库权限吗？**
 
-不能。首次启动密码只是本机使用门禁，适合防止误用或转发后直接运行。真正的访问控制仍然建议使用 GitHub 私有仓库授权和数据库账号权限。
+不能。访问密码只是本机使用门禁，适合防止误用或转发后直接运行。真正的访问控制仍然建议使用 GitHub 私有仓库授权和数据库账号权限。
 
 **Q：最终输出是 AI 判断过的吗？**
 
@@ -522,10 +537,11 @@ ditto skills/zentao-data-assistant ~/.codex/skills/zentao-data-assistant
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.9.1 | 2026-04-27 | 简化 `setup`：只询问数据库连接和 Git访问密码，并在初始化时直接完成解锁 |
 | v0.9 | 2026-04-27 | 新增 `data-zentao setup` 初始化向导，支持对话式生成本机配置并安装 Skill |
-| v0.8.2 | 2026-04-27 | 首次运行查库/报告命令时自动提示输入启动密码 |
-| v0.8.1 | 2026-04-27 | 简化首次启动密码流程，`.env.example` 预置统一启动密码哈希 |
-| v0.8 | 2026-04-27 | 新增可选首次启动密码门禁：`hash-password`、`unlock`、`lock`、`auth-status` |
+| v0.8.2 | 2026-04-27 | 首次运行查库/报告命令时自动提示输入访问密码 |
+| v0.8.1 | 2026-04-27 | 简化首次访问密码流程，`.env.example` 预置统一访问密码哈希 |
+| v0.8 | 2026-04-27 | 新增可选访问密码门禁：`hash-password`、`unlock`、`lock`、`auth-status` |
 | v0.7 | 2026-04-27 | 新增 `zentao-data-assistant` Codex Skill，修复数字任务 ID 查询需求，增强数据库超时重试，完善从零安装说明 |
 | v0.6 | 2026-04-27 | 对齐旧版日报、双项目周汇总、Bug界定和版本复盘的输出结构与文件命名 |
 | v0.5 | 2026-04-27 | 同步旧版日报下一版本预览、Bug界定、版本复盘能力，并修正需求/任务截止口径 |

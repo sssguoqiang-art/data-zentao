@@ -14,8 +14,8 @@ Use this skill to answer ZenTao questions through `data-zentao` and the bundled 
 1. Locate the `data-zentao` repository if the current directory is not already inside it.
 2. Before using repository commands, run `data-zentao update-check` when the command is available. If it says the remote is ahead, tell the user and ask whether to update before continuing.
 3. If the CLI is not installed, use `PYTHONPATH=src python3 -c "from data_zentao.cli import main; raise SystemExit(main())"` from the repository root.
-4. If database config is missing, guide the user to run `data-zentao setup`. Prefer the setup wizard over asking non-technical users to edit `.env` manually. Do not write credentials into tracked files or final answers.
-5. If `.env` enables `DATA_ZENTAO_START_PASSWORD_SHA256`, normal data commands will prompt for the startup password automatically when this computer is not unlocked. `data-zentao unlock` can also be run manually.
+4. If database config is missing, guide the user to run `data-zentao setup`. The wizard asks for only five items: database host, database port, database user, database password, and Git访问密码. Prefer the setup wizard over asking non-technical users to edit `.env` manually. Do not write credentials into tracked files or final answers.
+5. If `.env` enables `DATA_ZENTAO_START_PASSWORD_SHA256`, normal data commands will prompt for the access password automatically when this computer is not unlocked. `data-zentao setup` unlocks the computer immediately, and `data-zentao unlock` can also be run manually.
 6. Classify the user request: project/version report, demand/task detail, person, department, Bug/quality, todo/measure, schema/field explanation, or free SQL analysis.
 7. Read only the relevant reference files below, then call `data-zentao` commands or read-only SQL.
 8. Treat command output as data material, not the final answer. The final answer must include AI judgment: conclusion, evidence, risk, and next action.
@@ -44,6 +44,7 @@ Use this skill to answer ZenTao questions through `data-zentao` and the bundled 
 
 ```bash
 data-zentao check
+data-zentao setup
 data-zentao doctor
 data-zentao schema --table zt_task
 data-zentao schema --columns 延期
