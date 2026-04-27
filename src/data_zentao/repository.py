@@ -573,16 +573,33 @@ class ZentaoRepository:
               IFNULL(parent.name, t.name) AS root_name,
               t.name,
               t.status,
+              t.source,
+              t.category,
+              t.isSureStory,
               t.assignedTo,
               u.realname AS assignedName,
+              au_dept.name AS assignedDeptName,
+              t.openedDate,
+              t.estStarted,
               t.deadline,
               t.finishedDate,
+              t.finishedBy,
+              fu.realname AS finishedName,
+              fu_dept.name AS finishedDeptName,
+              t.closedBy,
+              cu.realname AS closedName,
+              cu_dept.name AS closedDeptName,
               t.delayTimes,
               t.delayReason,
               t.left
             FROM zt_task t
             LEFT JOIN zt_task parent ON parent.id = t.parent AND t.parent > 0
             LEFT JOIN zt_user u ON u.account = t.assignedTo
+            LEFT JOIN zt_dept au_dept ON au_dept.id = u.dept
+            LEFT JOIN zt_user fu ON fu.account = t.finishedBy
+            LEFT JOIN zt_dept fu_dept ON fu_dept.id = fu.dept
+            LEFT JOIN zt_user cu ON cu.account = t.closedBy
+            LEFT JOIN zt_dept cu_dept ON cu_dept.id = cu.dept
             WHERE t.deleted = '0'
               AND t.execution = %s
               AND (
@@ -1142,8 +1159,14 @@ class ZentaoRepository:
               b.phenomenon,
               b.scopeInfluence,
               GROUP_CONCAT(
-                DISTINCT CONCAT_WS('：', r.dept, NULLIF(r.causeAnalysis, ''), NULLIF(r.nextStep, ''))
-                ORDER BY r.dept SEPARATOR ' | '
+                DISTINCT CONCAT(
+                  COALESCE(rd.name, r.dept),
+                  '||',
+                  REPLACE(REPLACE(COALESCE(r.causeAnalysis, ''), '\r', ' '), '\n', ' '),
+                  '||',
+                  REPLACE(REPLACE(COALESCE(r.nextStep, ''), '\r', ' '), '\n', ' ')
+                )
+                ORDER BY r.dept SEPARATOR '||ROW||'
               ) AS dept_review
             FROM zt_bug b
             LEFT JOIN zt_user au ON au.account = b.assignedTo
@@ -1152,6 +1175,9 @@ class ZentaoRepository:
               ON b.ownerDept REGEXP '^[0-9]+$'
               AND od.id = CAST(b.ownerDept AS UNSIGNED)
             LEFT JOIN zt_bug_dept_review r ON r.bugId = b.id
+            LEFT JOIN zt_dept rd
+              ON r.dept REGEXP '^[0-9]+$'
+              AND rd.id = CAST(r.dept AS UNSIGNED)
             WHERE b.deleted = '0'
               AND b.execution = %s
             GROUP BY
@@ -1246,13 +1272,22 @@ class ZentaoRepository:
             LEFT JOIN zt_user tu ON tu.account = t.assignedTo
             LEFT JOIN (
               SELECT
-                bugId,
+                r.bugId,
                 GROUP_CONCAT(
-                  DISTINCT CONCAT_WS('：', dept, NULLIF(causeAnalysis, ''), NULLIF(nextStep, ''))
-                  ORDER BY dept SEPARATOR ' | '
+                  DISTINCT CONCAT(
+                    COALESCE(d.name, r.dept),
+                    '||',
+                    REPLACE(REPLACE(COALESCE(r.causeAnalysis, ''), '\r', ' '), '\n', ' '),
+                    '||',
+                    REPLACE(REPLACE(COALESCE(r.nextStep, ''), '\r', ' '), '\n', ' ')
+                  )
+                  ORDER BY r.dept SEPARATOR '||ROW||'
                 ) AS dept_review
-              FROM zt_bug_dept_review
-              GROUP BY bugId
+              FROM zt_bug_dept_review r
+              LEFT JOIN zt_dept d
+                ON r.dept REGEXP '^[0-9]+$'
+                AND d.id = CAST(r.dept AS UNSIGNED)
+              GROUP BY r.bugId
             ) r ON r.bugId = b.id
             WHERE b.deleted = '0'
               AND b.execution = %s
@@ -1318,13 +1353,20 @@ class ZentaoRepository:
             version_id = int(sprint["id"])
             task_summary = self.get_version_task_summary(version_id, as_of).get("summary") or {}
             bug_summary = self.get_bug_summary(version_id, as_of).get("summary") or {}
-            demand_summary = self.get_version_demand_summary(version_id).get("summary") or {}
+            req_counts = self.get_review_requirement_counts(version_id)
             bug_classification = self.db.fetch_one(
                 """
                 SELECT
                   SUM(IF(classification IN ('1','2') AND type <> 'performance', 1, 0)) AS external_bugs,
                   SUM(IF(classification IN ('4','5') AND type NOT IN ('performance','DDProblem'), 1, 0)) AS internal_bugs,
-                  SUM(IF(classification IN ('1','2') AND type = 'performance', 1, 0)) AS nonbug_bugs
+                  SUM(IF(classification IN ('4','5'), 1, 0)) AS internal_bugs_raw,
+                  SUM(IF(classification IN ('1','2') AND type = 'performance', 1, 0)) AS nonbug_bugs,
+                  SUM(IF(
+                    classification IN ('1','2')
+                    AND type <> 'performance'
+                    AND FIND_IN_SET('45', REPLACE(ownerDept, ' ', '')) > 0,
+                    1, 0
+                  )) AS test_external_bugs
                 FROM zt_bug
                 WHERE deleted = '0'
                   AND execution = %s
@@ -1339,16 +1381,78 @@ class ZentaoRepository:
                     "end": sprint.get("end"),
                     "tasks": task_summary.get("total_tasks", 0),
                     "open_tasks": task_summary.get("open_tasks", 0),
-                    "demands": demand_summary.get("total_demands", 0),
+                    "demands": req_counts.get("total_reqs", 0),
+                    "ext_reqs": req_counts.get("ext_reqs", 0),
+                    "int_reqs": req_counts.get("int_reqs", 0),
                     "bugs": bug_summary.get("total_bugs", 0),
                     "active_bugs": bug_summary.get("active_bugs", 0),
                     "high_active_bugs": bug_summary.get("active_high_bugs", 0),
                     "external_bugs": bug_classification.get("external_bugs", 0),
                     "internal_bugs": bug_classification.get("internal_bugs", 0),
+                    "internal_bugs_raw": bug_classification.get("internal_bugs_raw", 0),
                     "nonbug_bugs": bug_classification.get("nonbug_bugs", 0),
+                    "test_external_bugs": bug_classification.get("test_external_bugs", 0),
                 }
             )
         return trends
+
+    def get_review_requirement_counts(self, version_id: int) -> dict[str, Any]:
+        pool_rows = self.db.fetch_all(
+            """
+            SELECT
+              p.category,
+              COUNT(*) AS count
+            FROM zt_pool p
+            LEFT JOIN zt_task t ON t.id = p.taskID
+            WHERE p.deleted = '0'
+              AND p.type = 0
+              AND p.pv_id = %s
+              AND COALESCE(t.status, '') <> 'cancel'
+            GROUP BY p.category
+            """,
+            (version_id,),
+        )
+        missing_task_rows = self.db.fetch_all(
+            """
+            SELECT
+              CASE
+                WHEN t.source = 'customer' THEN 'version'
+                WHEN t.source = 'operation' THEN 'operation'
+                ELSE 'internal'
+              END AS category,
+              COUNT(*) AS count
+            FROM zt_task t
+            LEFT JOIN zt_pool p
+              ON p.deleted = '0'
+              AND p.type = 0
+              AND p.pv_id = %s
+              AND p.taskID = t.id
+            WHERE t.deleted = '0'
+              AND t.execution = %s
+              AND t.parent <= 0
+              AND t.status <> 'cancel'
+              AND p.id IS NULL
+            GROUP BY
+              CASE
+                WHEN t.source = 'customer' THEN 'version'
+                WHEN t.source = 'operation' THEN 'operation'
+                ELSE 'internal'
+              END
+            """,
+            (version_id, version_id),
+        )
+        counts = {"version": 0, "operation": 0, "internal": 0}
+        for row in [*pool_rows, *missing_task_rows]:
+            category = str(row.get("category") or "")
+            if category in counts:
+                counts[category] += int(row.get("count") or 0)
+        return {
+            "ext_reqs": counts["version"] + counts["operation"],
+            "int_reqs": counts["internal"],
+            "version_reqs": counts["version"],
+            "operation_reqs": counts["operation"],
+            "total_reqs": counts["version"] + counts["operation"] + counts["internal"],
+        }
 
     def get_version_adjusted_pool_items(self, version_id: int) -> list[dict[str, Any]]:
         version = self.db.fetch_one(
@@ -1381,21 +1485,46 @@ class ZentaoRepository:
               p.id AS pool_id,
               p.title,
               p.category,
-              p.taskID,
-              t.name AS task_name,
-              t.assignedTo,
+              COALESCE(child.id, t.id, p.taskID) AS taskID,
+              COALESCE(child.name, t.name, p.title) AS task_name,
+              COALESCE(child.source, t.source, p.category) AS source,
+              COALESCE(child.category, t.category, p.category) AS task_category,
+              COALESCE(child.isSureStory, t.isSureStory) AS isSureStory,
+              COALESCE(child.assignedTo, t.assignedTo) AS assignedTo,
               u.realname AS assignedName,
-              t.status AS task_status,
-              t.deadline,
-              t.finishedDate,
-              t.delayTimes,
+              au_dept.name AS assignedDeptName,
+              COALESCE(child.openedDate, t.openedDate) AS openedDate,
+              COALESCE(child.estStarted, t.estStarted) AS estStarted,
+              COALESCE(child.status, t.status) AS task_status,
+              COALESCE(child.deadline, t.deadline) AS deadline,
+              COALESCE(child.finishedDate, t.finishedDate) AS finishedDate,
+              COALESCE(child.finishedBy, t.finishedBy) AS finishedBy,
+              fu.realname AS finishedName,
+              fu_dept.name AS finishedDeptName,
+              COALESCE(child.closedBy, t.closedBy) AS closedBy,
+              cu.realname AS closedName,
+              cu_dept.name AS closedDeptName,
+              COALESCE(child.delayTimes, t.delayTimes) AS delayTimes,
               src.adjustLog,
               src.delayReason,
               src.delayMeasure
             FROM zt_pool p
             JOIN zt_pool src ON src.id = p.sourceId
             LEFT JOIN zt_task t ON t.id = p.taskID
-            LEFT JOIN zt_user u ON u.account = t.assignedTo
+            LEFT JOIN (
+              SELECT parent, MIN(id) AS child_id
+              FROM zt_task
+              WHERE deleted = '0'
+                AND name LIKE '【开发单】%%'
+              GROUP BY parent
+            ) dev_task ON dev_task.parent = t.id
+            LEFT JOIN zt_task child ON child.id = dev_task.child_id
+            LEFT JOIN zt_user u ON u.account = COALESCE(child.assignedTo, t.assignedTo)
+            LEFT JOIN zt_dept au_dept ON au_dept.id = u.dept
+            LEFT JOIN zt_user fu ON fu.account = COALESCE(child.finishedBy, t.finishedBy)
+            LEFT JOIN zt_dept fu_dept ON fu_dept.id = fu.dept
+            LEFT JOIN zt_user cu ON cu.account = COALESCE(child.closedBy, t.closedBy)
+            LEFT JOIN zt_dept cu_dept ON cu_dept.id = cu.dept
             WHERE p.deleted = '0'
               AND p.type = 0
               AND p.pv_id = %s

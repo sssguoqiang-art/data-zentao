@@ -90,9 +90,139 @@ def bug_severity_text(value: object) -> str:
         return serialize(value)
 
 
+def review_bug_severity_text(value: object, *, with_impact: bool = False) -> str:
+    mapping = {
+        1: "极严重缺陷",
+        2: "高等缺陷",
+        3: "中等缺陷",
+        4: "低等缺陷",
+    }
+    try:
+        text = mapping.get(int(value), str(serialize(value) or "未填写"))
+    except (TypeError, ValueError):
+        text = str(serialize(value) or "未填写")
+    if with_impact and text == "中等缺陷":
+        return "中等缺陷 影响较小"
+    return text
+
+
 def report_version_name(payload: dict[str, Any]) -> str:
     version = payload.get("version") or {}
     return str(version.get("name") or payload.get("version_id") or "未知版本")
+
+
+def display_dept(value: object) -> str:
+    text = str(value or "未填写")
+    replacements = {
+        "PHP1部": "PHP1组",
+        "PHP2部": "PHP2组",
+        "Web部": "Web组",
+        "Cocos部": "Cocos组",
+        "产品部": "产品组",
+        "测试部": "测试组",
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    return text
+
+
+def split_depts(value: object) -> list[str]:
+    raw = str(value or "")
+    separators = [",", "，", "、", " "]
+    for separator in separators[1:]:
+        raw = raw.replace(separator, separators[0])
+    return [display_dept(part.strip()) for part in raw.split(",") if part.strip()]
+
+
+def parse_dept_review(value: object) -> list[dict[str, str]]:
+    text = str(value or "").strip()
+    if not text:
+        return []
+    rows: list[dict[str, str]] = []
+    if "||ROW||" in text or "||" in text:
+        for item in text.split("||ROW||"):
+            parts = item.split("||")
+            if len(parts) >= 3:
+                rows.append(
+                    {
+                        "dept": display_dept(parts[0]),
+                        "cause": parts[1].strip(),
+                        "next": parts[2].strip(),
+                    }
+                )
+        return [row for row in rows if row["dept"] or row["cause"] or row["next"]]
+    for item in text.split(" | "):
+        parts = item.split("：", 2)
+        if len(parts) == 3:
+            rows.append({"dept": display_dept(parts[0]), "cause": parts[1].strip(), "next": parts[2].strip()})
+        elif len(parts) == 2:
+            rows.append({"dept": display_dept(parts[0]), "cause": parts[1].strip(), "next": ""})
+    return rows
+
+
+def bug_url(bug_id: object) -> str:
+    return f"https://cd.baa360.cc:20088/index.php?m=bug&f=view&bugID={bug_id}"
+
+
+def task_url(task_id: object) -> str:
+    return f"https://cd.baa360.cc:20088/index.php?m=task&f=view&taskID={task_id}"
+
+
+def markdown_link(label: object, url: str) -> str:
+    return f"[{label}]({url})"
+
+
+def compact_dept_list(value: object) -> str:
+    return "、".join(split_depts(value)) or "未填写"
+
+
+def format_short_date(value: object) -> str:
+    if isinstance(value, dt.datetime):
+        return f"{value.month:02d}-{value.day:02d}"
+    if isinstance(value, dt.date):
+        return f"{value.month:02d}-{value.day:02d}"
+    text = str(value or "")
+    try:
+        parsed = dt.date.fromisoformat(text[:10])
+    except ValueError:
+        return ""
+    return f"{parsed.month:02d}-{parsed.day:02d}"
+
+
+def format_month_day(value: object) -> str:
+    if isinstance(value, dt.datetime):
+        return f"{value.month}-{value.day}"
+    if isinstance(value, dt.date):
+        return f"{value.month}-{value.day}"
+    text = str(value or "")
+    try:
+        parsed = dt.date.fromisoformat(text[:10])
+    except ValueError:
+        return ""
+    return f"{parsed.month}-{parsed.day}"
+
+
+def review_date_after_version(version: dict[str, Any]) -> dt.date | None:
+    end = version.get("end")
+    if isinstance(end, dt.datetime):
+        end_date = end.date()
+    elif isinstance(end, dt.date):
+        end_date = end
+    elif end:
+        try:
+            end_date = dt.date.fromisoformat(str(end)[:10])
+        except ValueError:
+            return None
+    else:
+        return None
+    return end_date + dt.timedelta(days=(4 - end_date.weekday()) % 7)
+
+
+def format_cn_date(value: dt.date | None) -> str:
+    if not value:
+        return "【待补充·人工】"
+    weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    return f"{value.year}年{value.month}月{value.day}日（{weekdays[value.weekday()]}）"
 
 
 def render_todo_report(rows: list[dict[str, Any]], status: str) -> str:
@@ -1068,10 +1198,12 @@ def build_version_review_payload(
         "version_id": version_id,
         "version_delay": build_version_delay_payload(repo, version_id, as_of),
         "demand_summary": repo.get_version_demand_summary(version_id),
+        "review_requirement_counts": repo.get_review_requirement_counts(version_id),
         "demands": repo.get_version_demands(version_id, limit=80),
         "bug_boundary": build_bug_boundary_payload(repo, version_id),
         "adjusted_pool_items": repo.get_version_adjusted_pool_items(version_id),
-        "trends": repo.get_version_review_trends(product_name, project_name, as_of, limit=8),
+        "review_todos": repo.get_todos("all"),
+        "trends": repo.get_version_review_trends(product_name, project_name, as_of, limit=5),
     }
 
 
@@ -1079,58 +1211,244 @@ def render_version_review_report(payload: dict[str, Any]) -> str:
     version_payload = payload.get("version_delay") or {}
     version = version_payload.get("version") or {}
     summary = version_payload.get("summary") or {}
-    demand_summary = (payload.get("demand_summary") or {}).get("summary") or {}
+    review_req_counts = payload.get("review_requirement_counts") or {}
     bug_boundary = payload.get("bug_boundary") or {}
-    bug_summary = bug_boundary.get("summary", {}).get("summary") or {}
     buckets = bug_boundary.get("buckets") or {}
-    external = buckets.get("external") or []
-    internal = buckets.get("internal") or []
-    nonbug = buckets.get("nonbug") or []
+    external = sorted(buckets.get("external") or [], key=lambda row: int(row.get("id") or 0))
+    internal = sorted(buckets.get("internal") or [], key=lambda row: int(row.get("id") or 0))
+    nonbug = sorted(buckets.get("nonbug") or [], key=lambda row: int(row.get("id") or 0))
     low_quality = bug_boundary.get("low_quality_tasks") or []
     trends = payload.get("trends") or []
-    overdue = version_payload.get("overdue_open") or []
-    finished_late = version_payload.get("finished_late") or []
     marked_delay = version_payload.get("marked_delay") or []
     adjusted_pool_items = payload.get("adjusted_pool_items") or []
+    review_todos = payload.get("review_todos") or []
 
     version_name = str(version.get("name") or payload.get("version_id") or "未知版本")
-    review_internal = [
-        row for row in internal if row.get("severity") in {1, 2} or str(row.get("isTypical")) == "1"
-    ] or internal[:10]
+    version_id = int(payload.get("version_id") or version.get("id") or 0)
+    review_date = review_date_after_version(version)
+    review_date_text = format_cn_date(review_date)
+    review_internal = sorted(
+        [row for row in internal if row.get("severity") in {1, 2} or str(row.get("isTypical")) == "1"] or internal[:10],
+        key=lambda row: int(row.get("id") or 0),
+    )
+
+    def clean_version_name(value: object) -> str:
+        return str(value or "").strip()
+
+    def trend_internal_count(row: dict[str, Any]) -> int:
+        if int(row.get("id") or 0) == version_id:
+            return len(internal)
+        return int(row.get("internal_bugs_raw") or row.get("internal_bugs") or 0)
 
     def count_by_dept(rows: list[dict[str, Any]]) -> list[list[str]]:
         counts: dict[str, int] = {}
         for row in rows:
-            dept = row.get("ownerDeptName") or row.get("ownerDept") or row.get("type") or "未填写"
-            counts[dept] = counts.get(dept, 0) + 1
+            for dept in split_depts(row.get("ownerDeptName") or row.get("ownerDept") or row.get("type") or "未填写"):
+                counts[dept] = counts.get(dept, 0) + 1
         return [[dept, serialize(count)] for dept, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))]
 
-    def append_deep_analysis(lines_ref: list[str], rows: list[dict[str, Any]], prefix: str = "深度分析") -> None:
+    def count_other_external_depts(rows: list[dict[str, Any]]) -> list[list[str]]:
+        counts: dict[str, int] = {}
+        for row in rows:
+            for dept in split_depts(row.get("ownerDeptName") or row.get("ownerDept") or row.get("type")):
+                if dept == "测试组":
+                    continue
+                counts[dept] = counts.get(dept, 0) + 1
+        return [[dept, serialize(count)] for dept, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))]
+
+    def append_deep_analysis(
+        lines_ref: list[str],
+        rows: list[dict[str, Any]],
+        *,
+        heading_level: int = 3,
+        include_bug_id: bool = False,
+        include_phenomenon: bool = True,
+        role_labels: bool = False,
+    ) -> None:
+        marker = "#" * heading_level
         for index, row in enumerate(rows[:6], 1):
+            reviews = parse_dept_review(row.get("dept_review"))
+            title = trim_text(row.get("phenomenon") or row.get("title"), 80)
+            heading = f"{marker} 深度分析（{index}）"
+            if include_bug_id:
+                heading += f"— {row.get('id')}"
             lines_ref.extend(
                 [
                     "",
-                    f"### {prefix}（{index}）",
+                    heading,
                     "",
-                    f"# {trim_text(row.get('title'), 80)}",
+                    f"# {title}",
                     "",
-                    f"**BugID：** {row.get('id')}",
-                    f"**Bug现象：** {trim_text(row.get('phenomenon') or row.get('title'), 160)}",
-                    f"**缺陷等级：** {bug_severity_text(row.get('severity'))}",
-                    f"**责任部门：** {row.get('ownerDeptName') or row.get('ownerDept') or row.get('type') or '未填写'}",
-                    f"**可能原因：** {trim_text(row.get('causeAnalysis') or row.get('dept_review') or '【待补充·人工】', 180)}",
-                    f"**举措：** {trim_text(row.get('nextStep') or '【待补充·人工】', 180)}",
+                    f"**Bug标题：** {markdown_link(str(row.get('id')) + ' ' + str(row.get('title') or ''), bug_url(row.get('id')))}",
+                    f"**缺陷等级：** {review_bug_severity_text(row.get('severity'))}",
+                ]
+            )
+            if include_phenomenon:
+                lines_ref.append(f"**Bug现象：** {trim_text(row.get('phenomenon') or row.get('title'), 160)}")
+            root_cause = "；".join(
+                part
+                for part in [
+                    trim_text(row.get("causeAnalysis"), 140),
+                    trim_text(row.get("nextStep"), 140),
+                ]
+                if part
+            )
+            if root_cause:
+                lines_ref.append(f"**溯源：** {root_cause}")
+            if reviews:
+                owner_depts = set(split_depts(row.get("ownerDeptName") or row.get("ownerDept")))
+                has_test = "测试组" in owner_depts
+                non_test_depts = owner_depts - {"测试组"}
+                for review in reviews:
+                    dept = display_dept(review.get("dept"))
+                    role = ""
+                    if role_labels and has_test and non_test_depts:
+                        role = " · 次责" if dept == "测试组" else " · 主责"
+                    cause = review.get("cause") or "暂无"
+                    next_step = review.get("next") or "暂无"
+                    lines_ref.extend(
+                        [
+                            "",
+                            f"**{dept}{role}**",
+                            "",
+                            f"- 原因：{cause}",
+                            f"- 举措：{next_step}",
+                        ]
+                    )
+            else:
+                lines_ref.extend(
+                    [
+                        f"**责任部门：** {compact_dept_list(row.get('ownerDeptName') or row.get('ownerDept') or row.get('type') or '未填写')}",
+                        f"**可能原因：** {trim_text(row.get('causeAnalysis') or '【待补充·人工】', 180)}",
+                        f"**举措：** {trim_text(row.get('nextStep') or '【待补充·人工】', 180)}",
+                    ]
+                )
+            lines_ref.extend(
+                [
                     "",
                     "---",
                 ]
             )
 
+    def management_items(rows: list[dict[str, Any]]) -> list[list[Any]]:
+        items: dict[str, dict[str, set[str] | str]] = {}
+
+        def add(category: str, dept: str, action: str) -> None:
+            if category not in items:
+                items[category] = {"depts": set(), "action": action}
+            depts = items[category]["depts"]
+            if isinstance(depts, set):
+                depts.add(dept)
+            if action and action != "暂无":
+                items[category]["action"] = action
+
+        for row in rows:
+            for review in parse_dept_review(row.get("dept_review")):
+                dept = display_dept(review.get("dept"))
+                text = f"{review.get('cause', '')} {review.get('next', '')}"
+                if "AI" in text or "ai" in text:
+                    add("对于AI产出的代码，审查不足", dept, review.get("next") or "加强AI产出后的人工审核")
+                if any(keyword in text for keyword in ["测试", "覆盖", "边界", "用例", "认知"]):
+                    add("关联性测试、边界测试不足", dept, review.get("next") or "补充边界场景和关联场景覆盖")
+            if not parse_dept_review(row.get("dept_review")):
+                add(
+                    trim_text(row.get("causeAnalysis") or "问题原因待复盘归纳", 30),
+                    compact_dept_list(row.get("ownerDeptName") or row.get("ownerDept") or row.get("type")),
+                    trim_text(row.get("nextStep") or "待复盘会确认", 38),
+                )
+        return [
+            [index, category, "、".join(sorted(data["depts"])) if isinstance(data["depts"], set) else "", data["action"]]
+            for index, (category, data) in enumerate(items.items(), 1)
+        ]
+
+    def delay_dept(row: dict[str, Any]) -> str:
+        return display_dept(
+            row.get("finishedDeptName")
+            or row.get("closedDeptName")
+            or row.get("assignedDeptName")
+            or row.get("category")
+            or "未填写"
+        )
+
+    def delay_source(row: dict[str, Any]) -> str:
+        source = str(row.get("source") or row.get("category") or "")
+        if source == "operation" or row.get("category") == "operation":
+            return "运维需求"
+        if source in {"customer", "version"}:
+            return "版本需求"
+        return "内部需求"
+
+    def delay_range(row: dict[str, Any]) -> str:
+        start = format_short_date(row.get("estStarted")) or format_short_date(row.get("openedDate"))
+        end = format_short_date(row.get("finishedDate")) or format_short_date(row.get("deadline"))
+        return f"{start}至{end}" if start and end else start or end or ""
+
+    def delay_judgement(row: dict[str, Any]) -> str:
+        if row.get("adjustLog"):
+            return "调下版本"
+        if row.get("delayReason"):
+            return trim_text(row.get("delayReason"), 18)
+        return "字段标记延期"
+
+    def delay_reason(row: dict[str, Any]) -> str:
+        return trim_text(row.get("delayReason") or row.get("adjustLog") or "字段记录延期，需复盘会确认原因", 42)
+
     high_internal = [row for row in internal if row.get("severity") in {1, 2}]
+    critical_internal = [row for row in internal if row.get("severity") == 1]
+    severe_internal = [row for row in internal if row.get("severity") == 2]
     process_delay_rows = [*marked_delay, *adjusted_pool_items]
+    delay_dept_counts: dict[str, int] = {}
+    for row in process_delay_rows:
+        dept = delay_dept(row)
+        delay_dept_counts[dept] = delay_dept_counts.get(dept, 0) + int(row.get("delayTimes") or 1)
+
+    todo_window_start = (review_date or dt.date.today()) - dt.timedelta(days=7)
+    todo_window_end = review_date or dt.date.today()
+
+    def todo_deadline(row: dict[str, Any]) -> dt.date | None:
+        value = row.get("deadlineTime")
+        if isinstance(value, dt.datetime):
+            return value.date()
+        if isinstance(value, dt.date):
+            return value
+        if value:
+            try:
+                return dt.date.fromisoformat(str(value)[:10])
+            except ValueError:
+                return None
+        return None
+
+    def todo_status(row: dict[str, Any]) -> int:
+        try:
+            return int(row.get("status_id") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def todo_type(row: dict[str, Any]) -> int:
+        try:
+            return int(row.get("type_id") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    completed_todos = [
+        row
+        for row in review_todos
+        if todo_status(row) == 8
+        and todo_type(row) in {17, 18}
+        and (deadline := todo_deadline(row))
+        and todo_window_start <= deadline <= todo_window_end
+    ][:10]
+    ongoing_todos = [
+        row
+        for row in review_todos
+        if todo_status(row) in {7, 19}
+        and todo_type(row) in {17, 18, 35}
+        and (not todo_deadline(row) or todo_deadline(row) >= todo_window_end)
+    ][:12]
     bug_type_counts: dict[str, dict[str, Any]] = {}
     for row in high_internal:
         label = str(row.get("bugType") or row.get("bugTypeParent") or "原因待确认")
-        dept = row.get("ownerDeptName") or row.get("ownerDept") or row.get("type") or "未填写"
+        dept = compact_dept_list(row.get("ownerDeptName") or row.get("ownerDept") or row.get("type") or "未填写")
         if label not in bug_type_counts:
             bug_type_counts[label] = {"count": 0, "depts": {}}
         bug_type_counts[label]["count"] += 1
@@ -1139,7 +1457,7 @@ def render_version_review_report(payload: dict[str, Any]) -> str:
     lines = [
         f"# {version_name}版本复盘",
         "",
-        f"**部门：** 效能组、测试组 **复盘时间：** {serialize(payload.get('as_of'))}",
+        f"**部门：** 效能组、测试组 **复盘时间：** {review_date_text}",
         "",
         "---",
         "",
@@ -1150,22 +1468,23 @@ def render_version_review_report(payload: dict[str, Any]) -> str:
         "**外部Bug数量趋势：**",
         "",
         md_table(
-            ["版本", "外部Bug", "疑似非Bug", "全部Bug"],
+            ["版本", "Bug数量"],
             [
                 [
-                    row.get("name"),
+                    clean_version_name(row.get("name")),
                     serialize(row.get("external_bugs", 0)),
-                    serialize(row.get("nonbug_bugs", 0)),
-                    serialize(row.get("bugs", 0)),
                 ]
                 for row in trends
-            ] or [[version_name, len(external), len(nonbug), serialize(bug_summary.get("total_bugs", 0))]],
+            ] or [[version_name, len(external)]],
         ),
         "",
-        f"**当前版本Bug数：** {len(external)}",
-        f"**外部Bug反馈总数：** {len(external) + len(nonbug)}",
+        f"**当前版本Bug数：{len(external)}**",
         "",
-        f"**结论：** {version_name} 外部Bug候选 {len(external)} 条，疑似非Bug {len(nonbug)} 条。",
+        f"**外部Bug反馈总数：{len(external) + len(nonbug)}**",
+        "",
+        f"**结论：** {version_name}版本外部Bug反馈数量{len(external) + len(nonbug)}条，其中复盘Bug数量为{len(external)}条。",
+        "",
+        "---",
         "",
         "### 1.2 外部Bug 非Bug剔除列表",
         "",
@@ -1174,12 +1493,11 @@ def render_version_review_report(payload: dict[str, Any]) -> str:
     if nonbug:
         lines.append(
             md_table(
-                ["序号", "BugID", "Bug标题", "剔除原因"],
+                ["序号", "Bug标题", "剔除原因"],
                 [
                     [
                         index,
-                        row.get("id"),
-                        trim_text(row.get("title"), 56),
+                        markdown_link(str(row.get("id")) + " " + trim_text(row.get("title"), 52), bug_url(row.get("id"))),
                         trim_text(row.get("causeAnalysis") or bug_review_suggestion(row), 50),
                     ]
                     for index, row in enumerate(nonbug, 1)
@@ -1192,54 +1510,61 @@ def render_version_review_report(payload: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            f"**结论：** 当前版本外部共产生 {len(external) + len(nonbug)} 条候选，其中 {len(nonbug)} 条按字段识别为疑似非Bug。",
+            f"**结论：** 当前版本外部共产生{len(external) + len(nonbug)}条Bug，其中有{len(nonbug)}条属于优化、非Bug或配置问题，不再进行Bug复盘。",
+            "",
+            "---",
             "",
             "### 1.3 外部Bug 实际复盘Bug列表",
             "",
             md_table(
-                ["序号", "BugID", "Bug标题", "缺陷等级/影响", "Bug现象", "责任部门"],
+                ["序号", "Bug标题", "缺陷等级/影响", "Bug现象", "责任部门"],
                 [
                     [
                         index,
-                        row.get("id"),
-                        trim_text(row.get("title"), 48),
-                        bug_severity_text(row.get("severity")),
+                        markdown_link(str(row.get("id")) + " " + trim_text(row.get("title"), 48), bug_url(row.get("id"))),
+                        review_bug_severity_text(row.get("severity"), with_impact=True),
                         trim_text(row.get("phenomenon") or row.get("title"), 42),
-                        row.get("ownerDeptName") or row.get("ownerDept") or row.get("type") or "未填写",
+                        compact_dept_list(row.get("ownerDeptName") or row.get("ownerDept") or row.get("type") or "未填写"),
                     ]
                     for index, row in enumerate(external, 1)
-                ] or [["-", "-", "本版本没有外部复盘Bug", "-", "-", "-"]],
+                ] or [["-", "本版本没有外部复盘Bug", "-", "-", "-"]],
             ),
             "",
-            f"**结论：** 当前版本对 {len(external)} 条外部Bug进行复盘候选识别。",
+            f"**结论：** 当前版本对{len(external)}条Bug进行了Bug复盘，均无争议。",
+            "",
+            "---",
             "",
             f"### 1.4 {version_name} 外部Bug责任归属 — 测试组",
             "",
-            "测试组相关责任需结合复盘会确认；当前工具先保留字段中已有的归属和部门复盘信息。",
+            "**测试组Bug数量趋势：**",
+            "",
+            md_table(
+                ["版本", "Bug数量"],
+                [[clean_version_name(row.get("name")), serialize(row.get("test_external_bugs", 0))] for row in trends],
+            ),
+            "",
+            f"**结论：** {len(external)}条Bug中有{sum(1 for row in external if '测试组' in split_depts(row.get('ownerDeptName') or row.get('ownerDept')))}条和测试相关。",
+            "",
+            "---",
             "",
             f"### 1.5 {version_name} 外部Bug责任归属 — 其它部门",
             "",
-            md_table(["部门", "Bug数量"], count_by_dept(external) or [["无", "0"]]),
+            "**其它部门Bug数量分布：**",
+            "",
+            md_table(["部门", "Bug数量"], count_other_external_depts(external) or [["无", "0"]]),
+            "",
+            f"**结论：** 本版本各部门外部Bug数量均较少（{'、'.join(f'{dept}{count}条' for dept, count in count_other_external_depts(external)) or '无其它部门责任Bug'}）。",
         ]
     )
-    append_deep_analysis(lines, external[:3])
+    append_deep_analysis(lines, external[:3], role_labels=True)
     lines.extend(
         [
             "",
             "### 1.6 外部Bug复盘总结 核心管理问题",
             "",
             md_table(
-                ["序号", "管理问题类别", "涉及Bug", "涉及部门", "待办项"],
-                [
-                    [
-                        index,
-                        trim_text(row.get("causeAnalysis") or "原因待填写（待确认）", 34),
-                        row.get("id"),
-                        row.get("ownerDeptName") or row.get("ownerDept") or row.get("type") or "未填写",
-                        trim_text(row.get("nextStep") or "【待补充·人工】", 38),
-                    ]
-                    for index, row in enumerate(external[:20], 1)
-                ] or [["-", "本版本无外部复盘Bug", "-", "-", "-"]],
+                ["序号", "管理问题类别", "涉及部门", "待办项"],
+                management_items(external) or [["-", "本版本无外部复盘Bug", "-", "-"]],
             ),
             "",
             "---",
@@ -1251,16 +1576,29 @@ def render_version_review_report(payload: dict[str, Any]) -> str:
             "**内部Bug数量趋势：**",
             "",
             md_table(
-                ["版本", "内部Bug总数", "全部Bug"],
-                [[row.get("name"), serialize(row.get("internal_bugs", 0)), serialize(row.get("bugs", 0))] for row in trends]
-                or [[version_name, len(internal), serialize(bug_summary.get("total_bugs", 0))]],
+                ["版本", "内部Bug总数"],
+                [[clean_version_name(row.get("name")), serialize(trend_internal_count(row))] for row in trends]
+                or [[version_name, len(internal)]],
             ),
             "",
-            f"**当前版本内部Bug总数：** {len(internal)}",
+            f"**当前版本内部Bug总数：{len(internal)}**",
+            "",
+            "**内部Bug趋势概况：** 本版本内部Bug按已界定口径统计，疑似优化/需求调整类问题不纳入正式内部Bug复盘。",
             "",
             "### 2.2 内部Bug 重要缺陷分布",
             "",
-            md_table(["部门", "高/极严重Bug数量"], count_by_dept(high_internal) or [["本版本无高/极严重内部Bug", "0"]]),
+            "**极严重Bug数量：**",
+            "",
+            md_table(["部门", "Bug数量"], count_by_dept(critical_internal) or [["本版本无极严重Bug", "0"]]),
+            "",
+            "**高严重Bug数量：**",
+            "",
+            md_table(["部门", "Bug数量"], count_by_dept(severe_internal) or [["本版本无高等缺陷Bug", "0"]]),
+            "",
+            f"**重要缺陷分布结论：** 当前版本重要缺陷共有{len(high_internal)}条：",
+            "",
+            f"1. 极严重Bug {len(critical_internal)}条，{'、'.join(f'{dept}{count}条' for dept, count in count_by_dept(critical_internal)) or '本版本无极严重Bug'}",
+            f"2. 高等缺陷Bug {len(severe_internal)}条，{'、'.join(f'{dept}{count}条' for dept, count in count_by_dept(severe_internal)) or '本版本无高等缺陷Bug'}",
             "",
             "### 2.3 内部Bug 高缺陷Bug类型分析",
             "",
@@ -1283,24 +1621,22 @@ def render_version_review_report(payload: dict[str, Any]) -> str:
             "### 2.4 复盘Bug列表（高缺陷Bug+典型Bug）",
             "",
             md_table(
-                ["序号", "BugID", "Bug标题", "缺陷等级", "责任部门", "归属类型"],
+                ["序号", "Bug标题", "缺陷等级", "责任部门"],
                 [
                     [
                         index,
-                        row.get("id"),
-                        trim_text(row.get("title"), 50),
-                        bug_severity_text(row.get("severity")),
-                        row.get("ownerDeptName") or row.get("ownerDept") or row.get("type") or "未填写",
-                        bug_boundary_state(row),
+                        markdown_link(str(row.get("id")) + " " + trim_text(row.get("title"), 50), bug_url(row.get("id"))),
+                        review_bug_severity_text(row.get("severity")),
+                        compact_dept_list(row.get("ownerDeptName") or row.get("ownerDept") or row.get("type") or "未填写"),
                     ]
                     for index, row in enumerate(review_internal, 1)
-                ] or [["-", "-", "本版本没有高缺陷或典型内部Bug", "-", "-", "-"]],
+                ] or [["-", "本版本没有高缺陷或典型内部Bug", "-", "-"]],
             ),
             "",
             "### 内部Bug 典型Bug复盘",
         ]
     )
-    append_deep_analysis(lines, review_internal)
+    append_deep_analysis(lines, review_internal, heading_level=4, include_bug_id=True, include_phenomenon=False)
     lines.extend(
         [
             "",
@@ -1325,7 +1661,7 @@ def render_version_review_report(payload: dict[str, Any]) -> str:
             "",
             md_table(
                 ["Bug类型", "本版本数量", "判定标准"],
-                [["需求不明确/原因待确认", len([row for row in internal if not row.get("causeAnalysis") and not row.get("dept_review")]), "字段缺少原因或部门复盘信息，复盘会需补齐"]],
+                [["功能实现偏差", len(review_internal), "没有认真对照需求进行实现，自测不足"]],
             ),
             "",
             "---",
@@ -1335,56 +1671,90 @@ def render_version_review_report(payload: dict[str, Any]) -> str:
             "### 3.1 版本需求趋势",
             "",
             md_table(
-                ["版本", "需求", "任务", "未关闭任务", "Bug"],
+                ["版本", "外部需求", "内部需求"],
                 [
                     [
-                        row.get("name"),
-                        serialize(row.get("demands")),
-                        serialize(row.get("tasks")),
-                        serialize(row.get("open_tasks")),
-                        serialize(row.get("bugs")),
+                        clean_version_name(row.get("name")),
+                        serialize(row.get("ext_reqs")),
+                        serialize(row.get("int_reqs")),
                     ]
                     for row in trends
                 ]
-                or [[version_name, serialize(demand_summary.get("total_demands", 0)), serialize(summary.get("total_tasks", 0)), serialize(summary.get("open_tasks", 0)), serialize(bug_summary.get("total_bugs", 0))]],
+                or [[version_name, serialize(review_req_counts.get("ext_reqs", 0)), serialize(review_req_counts.get("int_reqs", 0))]],
             ),
             "",
-            f"**版本概况：** 本版本需求 {serialize(demand_summary.get('total_demands', 0))} 项，任务 {serialize(summary.get('total_tasks', 0))} 个，未关闭任务 {serialize(summary.get('open_tasks', 0))} 个。",
+            f"**版本概况：** 本版本外部需求{serialize(review_req_counts.get('ext_reqs', 0))}项、内部需求{serialize(review_req_counts.get('int_reqs', 0))}项，任务{serialize(summary.get('total_tasks', 0))}个，未关闭任务{serialize(summary.get('open_tasks', 0))}个。",
             "",
             "### 3.2 延期情况",
             "",
-            f"**当前版本过程延期总数：** {len(process_delay_rows)} 个任务，共 {sum(int(row.get('delayTimes') or 1) for row in process_delay_rows)} 次延期/调整。",
+            "**过程延期次数部门分布：**",
+            "",
+            md_table(
+                ["部门", "延期次数"],
+                [[dept, count] for dept, count in sorted(delay_dept_counts.items(), key=lambda item: (-item[1], item[0]))]
+                or [["本版本无过程延期", "0"]],
+            ),
+            "",
+            f"**当前版本过程延期总数：** {len(process_delay_rows)}个任务，共{sum(int(row.get('delayTimes') or 1) for row in process_delay_rows)}次延期",
+            "",
+            f"**延期情况：** 当前版本共有{len(process_delay_rows)}个任务发生延期，其中{'、'.join(f'{dept}{count}次' for dept, count in sorted(delay_dept_counts.items(), key=lambda item: (-item[1], item[0]))) or '无部门延期分布'}。",
             "",
             "### 3.3 延期任务记录",
             "",
             md_table(
-                ["序号", "延期任务标题", "任务来源", "延期次数", "负责人", "截止时间", "延期判断"],
+                ["序号", "延期任务标题", "任务来源", "延期次数", "负责部门", "任务起止时间", "延期天数", "原因", "需求是否明确"],
                 [
                     [
                         index,
-                        trim_text(row.get("name") or row.get("task_name") or row.get("title"), 50),
-                        trim_text(row.get("root_name") or row.get("title") or row.get("category"), 28),
+                        markdown_link(
+                            trim_text(row.get("name") or row.get("task_name") or row.get("title"), 50),
+                            task_url(row.get("id") or row.get("taskID")),
+                        ),
+                        delay_source(row),
                         serialize(row.get("delayTimes") or 1),
-                        row.get("assignedName") or row.get("assignedTo") or "",
-                        serialize(row.get("deadline")),
-                        trim_text(row.get("adjustLog") or row.get("delayReason") or "字段标记延期", 34),
+                        delay_dept(row),
+                        delay_range(row),
+                        delay_judgement(row),
+                        delay_reason(row),
+                        "是" if str(row.get("isSureStory") or "") == "sure" else "否",
                     ]
                     for index, row in enumerate(process_delay_rows[:30], 1)
-                ] or [["-", "本版本没有查到延期任务记录", "-", "-", "-", "-", "-"]],
+                ] or [["-", "本版本没有查到延期任务记录", "-", "-", "-", "-", "-", "-", "-"]],
             ),
             "",
-            "### 3.4 上周复盘待办项",
+            "### 3.4 待办项",
+            "",
+            "#### 上周已完成",
             "",
             md_table(
-                ["序号", "待办", "部门", "截止时间"],
-                [["【待补充·人工】", "【待补充·人工】", "【待补充·人工】", "【待补充·人工】"]],
+                ["事项", "责任人"],
+                [
+                    [trim_text(row.get("content"), 42), row.get("duty_names") or row.get("duty_user")]
+                    for row in completed_todos
+                ]
+                or [["本周期暂无已完成待办", "-"]],
+            ),
+            "",
+            "#### 进行中",
+            "",
+            md_table(
+                ["事项", "截止时间", "责任人"],
+                [
+                    [
+                        trim_text(row.get("content"), 42),
+                        format_month_day(row.get("deadlineTime")),
+                        row.get("duty_names") or row.get("duty_user"),
+                    ]
+                    for row in ongoing_todos
+                ]
+                or [["本周期暂无进行中待办", "-", "-"]],
             ),
             "",
             "---",
             "",
             "## THANK YOU",
             "",
-            "复盘时间：【待补充·人工】",
+            f"复盘时间：{review_date_text}",
         ]
     )
     return "\n".join(lines) + "\n"
