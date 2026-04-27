@@ -108,13 +108,28 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-### 第四步：配置数据库
+### 第四步：运行初始化向导
+
+```bash
+data-zentao setup
+```
+
+按提示输入数据库地址、端口、账号、密码即可。向导会自动：
+
+- 在本机生成 `.env`
+- 写入数据库连接信息
+- 安装 Codex Skill
+- 保留默认启动密码门禁
+
+这些信息只会保存在本机，不会提交到 Git。
+
+如果你更习惯手工配置，也可以复制 `.env.example`：
 
 ```bash
 cp .env.example .env
 ```
 
-然后编辑 `.env`，填入数据库连接信息：
+然后编辑 `.env`：
 
 ```text
 ZENTAO_DB_HOST=
@@ -507,6 +522,7 @@ ditto skills/zentao-data-assistant ~/.codex/skills/zentao-data-assistant
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.9 | 2026-04-27 | 新增 `data-zentao setup` 初始化向导，支持对话式生成本机配置并安装 Skill |
 | v0.8.2 | 2026-04-27 | 首次运行查库/报告命令时自动提示输入启动密码 |
 | v0.8.1 | 2026-04-27 | 简化首次启动密码流程，`.env.example` 预置统一启动密码哈希 |
 | v0.8 | 2026-04-27 | 新增可选首次启动密码门禁：`hash-password`、`unlock`、`lock`、`auth-status` |

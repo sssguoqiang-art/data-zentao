@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import getpass
+import os
 from pathlib import Path
+import shutil
 import sys
 
 from .auth import ensure_unlocked, hash_password, is_auth_enabled, lock as lock_auth, prompt_unlock, status as auth_status
@@ -257,6 +260,74 @@ def cmd_auth_status(args: argparse.Namespace) -> int:
         else:
             print("本机解锁：无需解锁")
         print(f"授权文件：{data['auth_file']}")
+    return 0
+
+
+def prompt_with_default(label: str, default: str | None = None) -> str:
+    suffix = f"（默认：{default}）" if default else ""
+    print(f"{label}{suffix}：", end="", flush=True)
+    value = input().strip()
+    return value or (default or "")
+
+
+def cmd_setup(_: argparse.Namespace) -> int:
+    print("data-zentao 初始化向导")
+    print("请按提示输入数据库连接信息；这些信息只会写入本机 .env，不会提交到 Git。")
+    print()
+
+    env_path = Path.cwd() / ".env"
+    if env_path.exists():
+        overwrite = input(".env 已存在，是否覆盖？输入 yes 继续：").strip().lower()
+        if overwrite not in {"yes", "y"}:
+            print("已取消初始化。")
+            return 0
+
+    host = prompt_with_default("数据库地址")
+    port = prompt_with_default("数据库端口", "3306")
+    user = prompt_with_default("数据库账号")
+    password = getpass.getpass("数据库密码：")
+    database = prompt_with_default("数据库名", "zentao")
+    product_name = prompt_with_default("默认产品名", "平台部")
+    project_name = prompt_with_default("默认项目名", "平台部")
+
+    if not host or not user or not password:
+        print("数据库地址、账号、密码不能为空。", file=sys.stderr)
+        return 1
+
+    startup_hash = os.getenv("DATA_ZENTAO_DEFAULT_START_PASSWORD_SHA256") or (
+        "1e59129a89a5ae71be1f024477f2c82aa808ac247c26ee970579eee89873c8c2"
+    )
+    content = "\n".join(
+        [
+            f"ZENTAO_DB_HOST={host}",
+            f"ZENTAO_DB_PORT={port}",
+            f"ZENTAO_DB_USER={user}",
+            f"ZENTAO_DB_PASSWORD={password}",
+            f"ZENTAO_DB_NAME={database}",
+            f"DATA_ZENTAO_START_PASSWORD_SHA256={startup_hash}",
+            f"ZENTAO_PLATFORM_PRODUCT_NAME={product_name}",
+            f"ZENTAO_PLATFORM_PROJECT_NAME={project_name}",
+            "",
+        ]
+    )
+    env_path.write_text(content, encoding="utf-8")
+    env_path.chmod(0o600)
+    print(f"已写入本机配置：{env_path}")
+
+    skill_src = Path.cwd() / "skills" / "zentao-data-assistant"
+    skill_dst = Path.home() / ".codex" / "skills" / "zentao-data-assistant"
+    if skill_src.exists():
+        skill_dst.parent.mkdir(parents=True, exist_ok=True)
+        if skill_dst.exists():
+            shutil.rmtree(skill_dst)
+        shutil.copytree(skill_src, skill_dst)
+        print(f"已安装 Codex Skill：{skill_dst}")
+    else:
+        print("未找到仓库内置 Skill，跳过 Skill 安装。")
+
+    print()
+    print("初始化完成。下一步运行：data-zentao check")
+    print("如果启用了启动密码，check 会自动提示输入启动密码。")
     return 0
 
 
@@ -759,6 +830,9 @@ def build_parser() -> argparse.ArgumentParser:
     update_check.add_argument("--format", choices=["markdown", "json"], default="markdown")
     update_check.set_defaults(func=cmd_update_check)
 
+    setup = subparsers.add_parser("setup", help="交互式生成本机 .env 并安装 Codex Skill。")
+    setup.set_defaults(func=cmd_setup)
+
     hash_password_parser = subparsers.add_parser("hash-password", help="生成首次启动密码哈希，供 .env 使用。")
     hash_password_parser.set_defaults(func=cmd_hash_password)
 
@@ -920,7 +994,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        local_commands = {"update-check", "hash-password", "unlock", "lock", "auth-status"}
+        local_commands = {"update-check", "setup", "hash-password", "unlock", "lock", "auth-status"}
         if args.command not in local_commands:
             maybe_print_update_notice()
             ensure_unlocked()
