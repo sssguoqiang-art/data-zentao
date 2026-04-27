@@ -139,7 +139,32 @@ data-zentao check
 用户数量：233
 ```
 
-### 第六步：开始使用或运行完整自检
+### 第六步：安装 Codex Skill（推荐）
+
+这一步不是运行 `data-zentao` 的硬性前置条件，但强烈建议 Codex 用户安装。
+
+原因是：`data-zentao` 负责查库，`zentao-data-assistant` Skill 负责让 Codex 记住正确字段口径、查询顺序和自检规则。安装后，后续即使不在本仓库目录里提问，Codex 也能先按 Skill 读取禅道数据库，不需要重新解释 `zt_pool`、`zt_task`、`zt_bug` 等字段关系。
+
+```bash
+mkdir -p ~/.codex/skills
+ditto skills/zentao-data-assistant ~/.codex/skills/zentao-data-assistant
+```
+
+验证 Skill 已安装：
+
+```bash
+test -f ~/.codex/skills/zentao-data-assistant/SKILL.md && echo "Skill installed"
+```
+
+安装后，可以在 Codex 里直接提：
+
+```text
+使用 $zentao-data-assistant 帮我查平台项目当前版本风险
+```
+
+如果暂时不安装 Skill，也可以直接在 `data-zentao` 仓库目录下使用。Codex 会读取 `AGENTS.md`，并按仓库内的 `skills/zentao-data-assistant/SKILL.md` 工作。
+
+### 第七步：开始使用或运行完整自检
 
 `check` 通过后，就可以在 Claude Code / Codex 里开始对话查询。比如：
 
@@ -159,25 +184,6 @@ data-zentao doctor
 
 完整自检会真实访问多张表和多类报告，可能耗时几分钟。只要没有 `FAIL`，就代表安装和基础数据读取通过。若出现 `WARN`，通常表示当前样本数据为空，需要结合实际问题再查。
 
-### 第七步：安装 Codex Skill（推荐）
-
-如果使用 Codex，建议把仓库内置的禅道 Skill 安装到本机 Skill 目录。这样以后不论在哪个对话里问禅道问题，Codex 都会先按正确字段口径读取数据，不依赖 Obsidian 或固定本机路径。
-
-```bash
-mkdir -p ~/.codex/skills
-ditto skills/zentao-data-assistant ~/.codex/skills/zentao-data-assistant
-```
-
-如果之前已经安装过旧版本 Skill，重复执行上面的 `ditto` 命令即可同步更新。
-
-安装后，可以在 Codex 里直接提：
-
-```text
-使用 $zentao-data-assistant 帮我查平台项目当前版本风险
-```
-
-如果没有安装 Skill，也可以直接在 `data-zentao` 仓库目录下使用。Codex 会读取 `AGENTS.md`，并按仓库内的 `skills/zentao-data-assistant/SKILL.md` 工作。
-
 ---
 
 ## 更新提醒
@@ -195,7 +201,10 @@ data-zentao update-check
 ```bash
 git pull --ff-only
 pip install -e .
+ditto skills/zentao-data-assistant ~/.codex/skills/zentao-data-assistant
 ```
+
+最后一行用于同步 Skill。没有安装 Codex Skill 的用户可以跳过。
 
 如果本地有未提交改动，先让 Claude/Codex 帮你确认这些改动是否需要保留，再更新。
 
@@ -431,6 +440,12 @@ data-zentao version-delay --version-id 405
 
 不需要登录禅道网页。这个工具直接读取数据库；使用者需要配置可访问数据库的 `.env`，并且本机网络要能连到数据库。
 
+**Q：Codex Skill 必须安装吗？**
+
+不是必须。如果始终在 `data-zentao` 仓库目录里使用，Codex 会读取 `AGENTS.md` 和仓库内置 Skill 文件，也能正常工作。
+
+但如果希望在不同对话、不同目录里都能直接问禅道问题，建议安装 Skill。它能让 Codex 自动带上字段口径、查询规则和自检机制，避免重新沟通数据库结构。
+
 **Q：最终输出是 AI 判断过的吗？**
 
 通过 Claude/Codex 使用时，最终回复必须由 AI 基于工具返回的数据再判断、归纳和解释。直接在终端运行 `data-zentao` 得到的是数据材料或报告草稿，不等同于完整 AI 结论。
@@ -445,6 +460,7 @@ data-zentao version-delay --version-id 405
 cd data-zentao
 git pull
 pip install -e .
+ditto skills/zentao-data-assistant ~/.codex/skills/zentao-data-assistant
 ```
 
 ---
