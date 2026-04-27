@@ -172,6 +172,59 @@ class ZentaoRepository:
         if not re.fullmatch(r"[A-Za-z0-9_]+", identifier):
             raise ValueError("表名只能包含字母、数字和下划线。")
 
+    @staticmethod
+    def _dept_ids_from_value(value: object) -> list[int]:
+        if value is None:
+            return []
+        ids: list[int] = []
+        for part in str(value).replace("，", ",").split(","):
+            part = part.strip()
+            if part.isdigit():
+                ids.append(int(part))
+        return ids
+
+    def _dept_name_map(self, values: list[object]) -> dict[int, str]:
+        dept_ids = sorted({dept_id for value in values for dept_id in self._dept_ids_from_value(value)})
+        if not dept_ids:
+            return {}
+        placeholders = ",".join(["%s"] * len(dept_ids))
+        rows = self.db.fetch_all(
+            f"""
+            SELECT id, name
+            FROM zt_dept
+            WHERE id IN ({placeholders})
+            """,
+            tuple(dept_ids),
+        )
+        return {int(row["id"]): row["name"] for row in rows}
+
+    def _dept_names_from_value(self, value: object, dept_map: dict[int, str]) -> str | None:
+        ids = self._dept_ids_from_value(value)
+        if not ids:
+            return None
+        names = [dept_map[dept_id] for dept_id in ids if dept_id in dept_map]
+        return ",".join(names) if names else None
+
+    def _normalize_bug_owner_depts(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        dept_map = self._dept_name_map([row.get("ownerDept") for row in rows])
+        if not dept_map:
+            return rows
+        for row in rows:
+            mapped = self._dept_names_from_value(row.get("ownerDept"), dept_map)
+            if mapped:
+                row["ownerDeptName"] = mapped
+        return rows
+
+    def _normalize_dept_labels(self, rows: list[dict[str, Any]], key: str = "dept") -> list[dict[str, Any]]:
+        dept_map = self._dept_name_map([row.get(key) for row in rows])
+        if not dept_map:
+            return rows
+        for row in rows:
+            mapped = self._dept_names_from_value(row.get(key), dept_map)
+            if mapped:
+                row[key] = mapped
+        return rows
+
     def find_product_id(self, product_name: str) -> int | None:
         row = self.db.fetch_one(
             """
@@ -255,6 +308,121 @@ class ZentaoRepository:
             LIMIT 1
             """,
             tuple(fallback_params),
+        )
+
+    def get_next_sprint_for_product(
+        self,
+        product_name: str,
+        as_of: dt.date,
+        project_name: str | None = None,
+    ) -> dict[str, Any] | None:
+        product_id = self.find_product_id(product_name)
+        if product_id is None:
+            return None
+
+        params: list[Any] = [product_id, as_of]
+        project_filter = ""
+        if project_name:
+            project_filter = "AND (root.name = %s OR p.name = %s)"
+            params.extend([project_name, project_name])
+
+        return self.db.fetch_one(
+            f"""
+            SELECT DISTINCT
+              p.id, p.name, p.type, p.status, p.parent, p.begin, p.end,
+              root.name AS project_name,
+              prod.id AS product_id,
+              prod.name AS product_name
+            FROM zt_project p
+            JOIN zt_projectproduct pp ON pp.project = p.id
+            JOIN zt_product prod ON prod.id = pp.product
+            LEFT JOIN zt_project root ON root.id = p.parent
+            WHERE p.deleted = '0'
+              AND p.type = 'sprint'
+              AND pp.product = %s
+              AND p.begin > %s
+              {project_filter}
+            ORDER BY p.begin ASC, p.id ASC
+            LIMIT 1
+            """,
+            tuple(params),
+        )
+
+    def get_latest_completed_sprint_for_product(
+        self,
+        product_name: str,
+        as_of: dt.date,
+        project_name: str | None = None,
+    ) -> dict[str, Any] | None:
+        product_id = self.find_product_id(product_name)
+        if product_id is None:
+            return None
+
+        params: list[Any] = [product_id, as_of]
+        project_filter = ""
+        if project_name:
+            project_filter = "AND (root.name = %s OR p.name = %s)"
+            params.extend([project_name, project_name])
+
+        return self.db.fetch_one(
+            f"""
+            SELECT DISTINCT
+              p.id, p.name, p.type, p.status, p.parent, p.begin, p.end,
+              root.name AS project_name,
+              prod.id AS product_id,
+              prod.name AS product_name
+            FROM zt_project p
+            JOIN zt_projectproduct pp ON pp.project = p.id
+            JOIN zt_product prod ON prod.id = pp.product
+            LEFT JOIN zt_project root ON root.id = p.parent
+            WHERE p.deleted = '0'
+              AND p.type = 'sprint'
+              AND pp.product = %s
+              AND p.end <= %s
+              {project_filter}
+            ORDER BY p.end DESC, p.id DESC
+            LIMIT 1
+            """,
+            tuple(params),
+        )
+
+    def get_recent_sprints_for_product(
+        self,
+        product_name: str,
+        as_of: dt.date,
+        project_name: str | None = None,
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
+        product_id = self.find_product_id(product_name)
+        if product_id is None:
+            return []
+
+        params: list[Any] = [product_id, as_of, limit]
+        project_filter = ""
+        if project_name:
+            project_filter = "AND (root.name = %s OR p.name = %s)"
+            params = [product_id, as_of, project_name, project_name, limit]
+
+        return self.db.fetch_all(
+            f"""
+            SELECT DISTINCT
+              p.id, p.name, p.type, p.status, p.parent, p.begin, p.end,
+              root.name AS project_name,
+              prod.id AS product_id,
+              prod.name AS product_name
+            FROM zt_project p
+            JOIN zt_projectproduct pp ON pp.project = p.id
+            JOIN zt_product prod ON prod.id = pp.product
+            LEFT JOIN zt_project root ON root.id = p.parent
+            WHERE p.deleted = '0'
+              AND p.type = 'sprint'
+              AND pp.product = %s
+              AND p.end <= %s
+              {project_filter}
+            ORDER BY p.end DESC, p.id DESC
+            LIMIT %s
+            """,
+            tuple(params),
         )
 
     def get_version_task_summary(self, version_id: int, as_of: dt.date) -> dict[str, Any]:
@@ -641,7 +809,7 @@ class ZentaoRepository:
         }
 
     def get_active_bugs(self, version_id: int, limit: int = 30) -> list[dict[str, Any]]:
-        return self.db.fetch_all(
+        rows = self.db.fetch_all(
             """
             SELECT
               b.id,
@@ -672,6 +840,7 @@ class ZentaoRepository:
             """,
             (version_id, limit),
         )
+        return self._normalize_bug_owner_depts(rows)
 
     def find_users(self, keyword: str, limit: int = 20) -> list[dict[str, Any]]:
         pattern = f"%{keyword}%"
@@ -740,7 +909,7 @@ class ZentaoRepository:
         )
 
     def get_person_bugs(self, account: str, limit: int = 80) -> list[dict[str, Any]]:
-        return self.db.fetch_all(
+        rows = self.db.fetch_all(
             """
             SELECT
               b.id,
@@ -771,6 +940,7 @@ class ZentaoRepository:
             """,
             (account, account, account, limit),
         )
+        return self._normalize_bug_owner_depts(rows)
 
     def get_person_todos(self, account: str, limit: int = 80) -> list[dict[str, Any]]:
         return self.db.fetch_all(
@@ -1011,7 +1181,150 @@ class ZentaoRepository:
             """,
             (version_id,),
         )
-        return {"summary": summary, "bugs": bugs, "dept_summary": dept_rows}
+        return {
+            "summary": summary,
+            "bugs": self._normalize_bug_owner_depts(bugs),
+            "dept_summary": self._normalize_dept_labels(dept_rows),
+        }
+
+    def get_bug_boundary(self, version_id: int, limit: int = 160) -> dict[str, Any]:
+        summary = self.get_bug_summary(version_id, dt.date.today())
+        bugs = self.db.fetch_all(
+            """
+            SELECT
+              b.id,
+              b.title,
+              b.status,
+              b.severity,
+              b.pri,
+              b.classification,
+              b.type,
+              b.bugTypeParent,
+              b.bugType,
+              b.isTypical,
+              b.assignedTo,
+              au.realname AS assignedName,
+              b.owner,
+              ou.realname AS ownerName,
+              b.ownerDept,
+              COALESCE(od.name, NULLIF(b.ownerDept, ''), NULLIF(b.type, ''), '未填写') AS ownerDeptName,
+              b.openedDate,
+              b.resolvedDate,
+              b.closedDate,
+              b.task,
+              t.name AS task_name,
+              t.assignedTo AS task_assignedTo,
+              tu.realname AS task_assignedName,
+              t.status AS task_status,
+              t.deadline AS task_deadline,
+              t.estimate AS task_estimate,
+              t.consumed AS task_consumed,
+              t.`left` AS task_left,
+              t.demandReview,
+              t.isSureStory,
+              t.delayReason AS task_delayReason,
+              b.causeAnalysis,
+              b.nextStep,
+              b.phenomenon,
+              b.scopeInfluence,
+              r.dept_review
+            FROM zt_bug b
+            LEFT JOIN zt_user au ON au.account = b.assignedTo
+            LEFT JOIN zt_user ou ON ou.account = b.owner
+            LEFT JOIN zt_dept od
+              ON b.ownerDept REGEXP '^[0-9]+$'
+              AND od.id = CAST(b.ownerDept AS UNSIGNED)
+            LEFT JOIN zt_task t ON t.id = b.task
+            LEFT JOIN zt_user tu ON tu.account = t.assignedTo
+            LEFT JOIN (
+              SELECT
+                bugId,
+                GROUP_CONCAT(
+                  DISTINCT CONCAT_WS('：', dept, NULLIF(causeAnalysis, ''), NULLIF(nextStep, ''))
+                  ORDER BY dept SEPARATOR ' | '
+                ) AS dept_review
+              FROM zt_bug_dept_review
+              GROUP BY bugId
+            ) r ON r.bugId = b.id
+            WHERE b.deleted = '0'
+              AND b.execution = %s
+            ORDER BY
+              b.classification ASC,
+              b.severity ASC,
+              b.pri ASC,
+              b.isTypical DESC,
+              b.openedDate DESC,
+              b.id DESC
+            LIMIT %s
+            """,
+            (version_id, limit),
+        )
+        low_quality_tasks = self.db.fetch_all(
+            """
+            SELECT
+              b.task AS task_id,
+              t.name AS task_name,
+              t.assignedTo AS task_assignedTo,
+              tu.realname AS task_assignedName,
+              t.status AS task_status,
+              t.deadline AS task_deadline,
+              t.estimate AS task_estimate,
+              t.consumed AS task_consumed,
+              COUNT(*) AS bug_count,
+              SUM(IF(b.classification IN ('1','2'), 1, 0)) AS external_bug_count,
+              SUM(IF(b.classification IN ('4','5'), 1, 0)) AS internal_bug_count,
+              SUM(IF(b.severity IN (1, 2) OR b.isTypical = '1', 1, 0)) AS key_bug_count,
+              GROUP_CONCAT(b.id ORDER BY b.severity ASC, b.id DESC SEPARATOR ',') AS bug_ids
+            FROM zt_bug b
+            JOIN zt_task t ON t.id = b.task
+            LEFT JOIN zt_user tu ON tu.account = t.assignedTo
+            WHERE b.deleted = '0'
+              AND b.execution = %s
+              AND b.task > 0
+              AND b.type <> 'performance'
+            GROUP BY
+              b.task, t.name, t.assignedTo, tu.realname, t.status, t.deadline,
+              t.estimate, t.consumed
+            HAVING bug_count >= 2
+            ORDER BY key_bug_count DESC, bug_count DESC, external_bug_count DESC
+            LIMIT 30
+            """,
+            (version_id,),
+        )
+        return {
+            "summary": summary,
+            "bugs": self._normalize_bug_owner_depts(bugs),
+            "low_quality_tasks": low_quality_tasks,
+        }
+
+    def get_version_review_trends(
+        self,
+        product_name: str,
+        project_name: str,
+        as_of: dt.date,
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
+        trends: list[dict[str, Any]] = []
+        for sprint in reversed(self.get_recent_sprints_for_product(product_name, as_of, project_name, limit)):
+            version_id = int(sprint["id"])
+            task_summary = self.get_version_task_summary(version_id, as_of).get("summary") or {}
+            bug_summary = self.get_bug_summary(version_id, as_of).get("summary") or {}
+            demand_summary = self.get_version_demand_summary(version_id).get("summary") or {}
+            trends.append(
+                {
+                    "id": version_id,
+                    "name": sprint.get("name"),
+                    "begin": sprint.get("begin"),
+                    "end": sprint.get("end"),
+                    "tasks": task_summary.get("total_tasks", 0),
+                    "open_tasks": task_summary.get("open_tasks", 0),
+                    "demands": demand_summary.get("total_demands", 0),
+                    "bugs": bug_summary.get("total_bugs", 0),
+                    "active_bugs": bug_summary.get("active_bugs", 0),
+                    "high_active_bugs": bug_summary.get("active_high_bugs", 0),
+                }
+            )
+        return trends
 
     def find_departments(self, keyword: str, limit: int = 20) -> list[dict[str, Any]]:
         pattern = f"%{keyword}%"
@@ -1120,7 +1433,7 @@ class ZentaoRepository:
             """,
             tuple(bug_params),
         )
-        return {"departments": departments, "users": users, "tasks": tasks, "bugs": bugs}
+        return {"departments": departments, "users": users, "tasks": tasks, "bugs": self._normalize_bug_owner_depts(bugs)}
 
     def get_weekly_report_data(
         self,

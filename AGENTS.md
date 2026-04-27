@@ -38,6 +38,8 @@ data-zentao demand-status "需求关键词"
 data-zentao person-tasks "姓名或账号"
 data-zentao dept-risk "部门关键词"
 data-zentao bug-review
+data-zentao bug-boundary
+data-zentao version-review
 data-zentao measures
 data-zentao ask "平台项目这个版本产生的延期情况"
 data-zentao schema --table zt_task
@@ -61,3 +63,5 @@ docs/数据口径.md
 - `zt_to_do_list.deleted='1'` 才是未删除。
 - `zt_task.parent=0/-1` 都不是有效父任务，只有 `parent>0` 且能命中 `zt_task.id` 才是子任务。
 - 人员展示时优先用 `zt_user.realname`，不要直接把账号当姓名。
+- 日报/周报/复盘中的延期判断优先使用 `zt_task.deadline`、`finishedDate`、`delayTimes` 和 `delayReason`，不要用 `zt_pool.deliveryDate` 代替任务截止时间。
+- `bug-boundary` 是复盘前预分类材料；`version-review` 是正式版本复盘材料。用户只说“复盘”时，先确认要哪一种。

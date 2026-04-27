@@ -10,6 +10,7 @@ from .db import ReadOnlyDatabase
 from .formatting import as_date, rows_to_md, to_json
 from .repository import ZentaoRepository
 from .reports import (
+    build_bug_boundary_payload,
     build_daily_report_payload,
     build_dept_risk_payload,
     build_demand_status_payload,
@@ -17,7 +18,9 @@ from .reports import (
     build_measures_payload,
     build_person_work_payload,
     build_version_delay_payload,
+    build_version_review_payload,
     build_weekly_report_payload,
+    render_bug_boundary_report,
     render_daily_report,
     render_dept_risk_report,
     render_demand_status_report,
@@ -27,6 +30,7 @@ from .reports import (
     render_platform_delay_report,
     render_todo_report,
     render_version_delay_report,
+    render_version_review_report,
     render_weekly_report,
 )
 from .router import answer_question
@@ -74,7 +78,12 @@ REQUIRED_SCHEMA = {
         "status",
         "severity",
         "pri",
+        "classification",
+        "bugTypeParent",
+        "bugType",
+        "isTypical",
         "execution",
+        "task",
         "assignedTo",
         "owner",
         "ownerDept",
@@ -130,6 +139,24 @@ def resolve_version_id(
     )
     if not sprint:
         raise ValueError("没有定位到当前版本，请通过 --version-id 指定版本。")
+    return int(sprint["id"])
+
+
+def resolve_review_version_id(
+    repo: ZentaoRepository,
+    config: AppConfig,
+    args: argparse.Namespace,
+    query_date: dt.date,
+) -> int:
+    if getattr(args, "version_id", None):
+        return int(args.version_id)
+    sprint = repo.get_latest_completed_sprint_for_product(
+        getattr(args, "product_name", None) or config.platform_product_name,
+        query_date,
+        getattr(args, "project_name", None) or config.platform_project_name,
+    )
+    if not sprint:
+        raise ValueError("没有定位到最近已交付版本，请通过 --version-id 指定版本。")
     return int(sprint["id"])
 
 
@@ -214,6 +241,25 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             add("查 Bug 复盘", "OK", f"Bug={summary.get('total_bugs', 0)}；active={summary.get('active_bugs', 0)}")
         except Exception as exc:
             add("查 Bug 复盘", "FAIL", str(exc))
+
+        try:
+            payload = build_bug_boundary_payload(repo, version_id)
+            buckets = payload.get("buckets") or {}
+            add("Bug界定", "OK", f"外部={len(buckets.get('external') or [])}；内部={len(buckets.get('internal') or [])}；疑似非Bug={len(buckets.get('nonbug') or [])}")
+        except Exception as exc:
+            add("Bug界定", "FAIL", str(exc))
+
+        try:
+            review_payload = build_version_review_payload(
+                repo,
+                args.product_name or config.platform_product_name,
+                args.project_name or config.platform_project_name,
+                version_id,
+                query_date,
+            )
+            add("版本复盘", "OK", f"版本={review_payload.get('version_delay', {}).get('version', {}).get('name')}")
+        except Exception as exc:
+            add("版本复盘", "FAIL", str(exc))
 
         try:
             dept_rows = repo.db.fetch_all(
@@ -437,6 +483,60 @@ def cmd_bug_review(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_bug_boundary(args: argparse.Namespace) -> int:
+    config, repo = make_repo()
+    query_date = as_date(args.date)
+    version_id = resolve_review_version_id(repo, config, args, query_date)
+    payload = build_bug_boundary_payload(repo, version_id)
+    if args.format == "json":
+        print(to_json(payload))
+    else:
+        report = render_bug_boundary_report(payload)
+        if args.save:
+            output_dir = Path(args.output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_path = output_dir / f"{version_id}_Bug界定预分类.md"
+            output_path.write_text(report, encoding="utf-8")
+            print(f"已生成：{output_path}")
+            if not args.quiet:
+                print()
+                print(report)
+        else:
+            print(report)
+    return 0
+
+
+def cmd_version_review(args: argparse.Namespace) -> int:
+    config, repo = make_repo()
+    query_date = as_date(args.date)
+    version_id = resolve_review_version_id(repo, config, args, query_date)
+    payload = build_version_review_payload(
+        repo,
+        args.product_name or config.platform_product_name,
+        args.project_name or config.platform_project_name,
+        version_id,
+        query_date,
+    )
+    if args.format == "json":
+        print(to_json(payload))
+    else:
+        report = render_version_review_report(payload)
+        if args.save:
+            output_dir = Path(args.output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            version = (payload.get("version_delay") or {}).get("version") or {}
+            version_name = str(version.get("name") or version_id).replace("/", "_")
+            output_path = output_dir / f"{version_name}_版本复盘.md"
+            output_path.write_text(report, encoding="utf-8")
+            print(f"已生成：{output_path}")
+            if not args.quiet:
+                print()
+                print(report)
+        else:
+            print(report)
+    return 0
+
+
 def cmd_dept_risk(args: argparse.Namespace) -> int:
     config, repo = make_repo()
     query_date = as_date(args.date)
@@ -607,6 +707,26 @@ def build_parser() -> argparse.ArgumentParser:
     bug_review.add_argument("--version-id", type=int, default=None)
     bug_review.add_argument("--format", choices=["markdown", "json"], default="markdown")
     bug_review.set_defaults(func=cmd_bug_review)
+
+    bug_boundary = subparsers.add_parser("bug-boundary", help="生成 Bug界定预分类报告。")
+    add_common_date_arg(bug_boundary)
+    add_common_project_args(bug_boundary)
+    bug_boundary.add_argument("--version-id", type=int, default=None)
+    bug_boundary.add_argument("--output-dir", default="reports/Bug界定")
+    bug_boundary.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    bug_boundary.add_argument("--save", action=argparse.BooleanOptionalAction, default=True)
+    bug_boundary.add_argument("--quiet", action="store_true", help="保存文件后不在终端打印全文。")
+    bug_boundary.set_defaults(func=cmd_bug_boundary)
+
+    version_review = subparsers.add_parser("version-review", help="生成版本复盘正式材料。")
+    add_common_date_arg(version_review)
+    add_common_project_args(version_review)
+    version_review.add_argument("--version-id", type=int, default=None)
+    version_review.add_argument("--output-dir", default="reports/版本复盘")
+    version_review.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    version_review.add_argument("--save", action=argparse.BooleanOptionalAction, default=True)
+    version_review.add_argument("--quiet", action="store_true", help="保存文件后不在终端打印全文。")
+    version_review.set_defaults(func=cmd_version_review)
 
     dept_risk = subparsers.add_parser("dept-risk", help="查询部门风险。")
     dept_risk.add_argument("dept", help="部门名称关键词，例如 PHP1、产品部、测试部。")

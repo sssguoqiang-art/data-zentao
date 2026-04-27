@@ -4,13 +4,16 @@ import datetime as dt
 import re
 
 from .reports import (
+    build_bug_boundary_payload,
     build_bug_review_payload,
     build_daily_report_payload,
     build_demand_status_payload,
     build_dept_risk_payload,
     build_measures_payload,
     build_person_work_payload,
+    build_version_review_payload,
     build_weekly_report_payload,
+    render_bug_boundary_report,
     render_bug_review_report,
     render_daily_report,
     render_demand_status_report,
@@ -19,6 +22,7 @@ from .reports import (
     render_person_work_report,
     render_platform_delay_report,
     render_todo_report,
+    render_version_review_report,
     render_weekly_report,
 )
 from .repository import ZentaoRepository
@@ -76,6 +80,11 @@ def _current_version_id(repo: ZentaoRepository, product_name: str, project_name:
     return int(sprint["id"]) if sprint else None
 
 
+def _latest_completed_version_id(repo: ZentaoRepository, product_name: str, project_name: str, as_of: dt.date) -> int | None:
+    sprint = repo.get_latest_completed_sprint_for_product(product_name, as_of, project_name)
+    return int(sprint["id"]) if sprint else None
+
+
 def answer_question(
     question: str,
     repo: ZentaoRepository,
@@ -101,6 +110,22 @@ def answer_question(
         payload = build_measures_payload(repo, "unfinished")
         return render_measures_report(payload)
 
+    if "Bug界定" in text or "bug界定" in text.lower() or "预分类" in text or "界定报告" in text:
+        version_id = _latest_completed_version_id(repo, product_name, project_name, as_of)
+        if not version_id:
+            return "没有定位到最近已交付版本，无法生成 Bug界定。"
+        return render_bug_boundary_report(build_bug_boundary_payload(repo, version_id))
+
+    if "版本复盘" in text or "复盘报告" in text:
+        version_id = _latest_completed_version_id(repo, product_name, project_name, as_of)
+        if not version_id:
+            return "没有定位到最近已交付版本，无法生成版本复盘。"
+        payload = build_version_review_payload(repo, product_name, project_name, version_id, as_of)
+        return render_version_review_report(payload)
+
+    if "复盘" in text and not ("bug" in text.lower() or "Bug" in text):
+        return "请确认要生成“版本复盘正式材料”，还是“Bug界定预分类材料”。这两个报告的用途和口径不同。"
+
     if ("bug" in text.lower() or "Bug" in text) and "复盘" in text:
         version_id = _current_version_id(repo, product_name, project_name, as_of)
         if not version_id:
@@ -120,7 +145,7 @@ def answer_question(
     if any(word in text for word in ["个人任务", "手上", "相关的待办", "相关的任务"]):
         keyword = _person_keyword(text)
         if not keyword:
-            return "请补充人员姓名或账号，例如：查一下郭强相关的待办和任务。"
+            return "请补充人员姓名或账号，例如：查一下某位同事相关的待办和任务。"
         return render_person_work_report(build_person_work_payload(repo, keyword))
 
     if "部门" in text and any(word in text for word in ["风险", "延期", "延迟", "逾期", "Bug", "bug"]):
@@ -154,6 +179,8 @@ def answer_question(
         "- 生成今日报告\n"
         "- 生成周报\n"
         "- Bug 复盘\n"
+        "- Bug界定\n"
+        "- 版本复盘\n"
         "- 查需求状态\n"
         "- 查个人任务\n"
         "- 查部门风险\n"

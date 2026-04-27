@@ -155,9 +155,11 @@ data-zentao doctor
 ```text
 平台项目这个版本产生的延期情况
 帮我总结当前版本的风险
-查一下郭强相关的待办和任务
+查一下某位同事相关的待办和任务
 需求池里最近新增了哪些需求？
 本周有哪些 Bug 值得关注？
+帮我出Bug界定报告
+帮我出版本复盘
 ```
 
 AI Agent 的工作方式是：
@@ -199,9 +201,11 @@ data-zentao query --sql "SELECT id, name, status FROM zt_task WHERE deleted='0' 
 | 查个人任务 | 已封装 | 按姓名/账号查询任务、Bug、待办 |
 | 查部门风险 | 已封装 | 按部门关键词聚合任务逾期和 Bug 风险 |
 | 查 Bug 复盘 | 已封装 | 当前版本 Bug 汇总、归属分布、原因和部门复盘信息 |
+| Bug界定 | 已封装 | 复盘前预分类材料：疑似非Bug、外部Bug、内部Bug、低质量任务 |
+| 版本复盘 | 已封装 | 正式复盘材料：Bug复盘、版本趋势、需求和延期分析 |
 | 查待办举措 | 已封装 | 待办 `zt_to_do_list` 和举措 `zt_measures_management` |
 | 待办查询 | 已封装 | 未完成、进行中、未开始、全部待办 |
-| 今日报告 | 已封装 | 当前版本概况、今日推进、延期风险、Bug、需求、待办 |
+| 今日报告 | 已封装 | 当前版本概况、下一版本预览、今日推进、延期风险、Bug、需求、待办 |
 | 周报 | 已封装 | 本周任务流转、Bug 流转、延期风险、待办 |
 | 平台当前版本定位 | 已封装 | 默认按当天日期定位平台部当前 sprint |
 | 平台版本延期报告 | 已封装 | 当前逾期未完成、已完成延期、延期原因填写情况 |
@@ -289,8 +293,10 @@ data-zentao check
 data-zentao ask "未完成的待办有哪些"
 data-zentao ask "平台项目这个版本产生的延期情况"
 data-zentao ask "查需求状态 VIP 权益功能优化"
-data-zentao ask "查一下郭强相关的待办和任务"
+data-zentao ask "查一下某位同事相关的待办和任务"
 data-zentao ask "查部门风险 产品部"
+data-zentao ask "帮我出Bug界定报告"
+data-zentao ask "帮我出版本复盘"
 ```
 
 说明：`ask` 目前是常见问题快捷路由。更开放的问题由 Claude/Codex 完成理解，工具层负责查数据。
@@ -328,10 +334,12 @@ data-zentao todos --status unfinished
 data-zentao doctor
 data-zentao todos --status ongoing
 data-zentao demand-status "VIP 权益功能优化"
-data-zentao person-tasks "张三"
+data-zentao person-tasks "person_account"
 data-zentao dept-risk "PHP1"
 data-zentao measures
 data-zentao bug-review
+data-zentao bug-boundary
+data-zentao version-review
 data-zentao daily-report
 data-zentao weekly-report
 data-zentao platform-delay
@@ -380,6 +388,7 @@ pip install -e .
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.5 | 2026-04-27 | 同步旧版日报下一版本预览、Bug界定、版本复盘能力，并修正需求/任务截止口径 |
 | v0.4 | 2026-04-27 | 新增 `doctor` 安装自检，明确最终输出需经 AI 判断 |
 | v0.3 | 2026-04-27 | 补齐需求状态、个人任务、部门风险、Bug 复盘、待办举措、日报、周报等核心能力 |
 | v0.2 | 2026-04-27 | README 按自由对话入口重写，新增 `schema` 和 `query`，支持 Agent 查询禅道数据 |
