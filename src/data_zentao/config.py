@@ -38,9 +38,14 @@ class DbConfig:
         if missing:
             names = ", ".join(missing)
             raise RuntimeError(f"缺少数据库配置：{names}。请先运行 data-zentao setup 完成本机初始化。")
+        port_text = os.getenv("ZENTAO_DB_PORT", "23306")
+        try:
+            port = int(port_text)
+        except ValueError as exc:
+            raise RuntimeError("数据库端口配置错误：ZENTAO_DB_PORT 必须是数字。请重新运行 data-zentao setup。") from exc
         return cls(
             host=os.environ["ZENTAO_DB_HOST"],
-            port=int(os.getenv("ZENTAO_DB_PORT", "3306")),
+            port=port,
             user=os.environ["ZENTAO_DB_USER"],
             password=os.environ["ZENTAO_DB_PASSWORD"],
             database=os.getenv("ZENTAO_DB_NAME", "zentao"),

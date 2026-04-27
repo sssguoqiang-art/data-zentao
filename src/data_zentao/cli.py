@@ -8,6 +8,8 @@ from pathlib import Path
 import shutil
 import sys
 
+from pymysql.err import MySQLError, OperationalError
+
 from .auth import (
     ensure_unlocked,
     hash_password,
@@ -120,6 +122,30 @@ REQUIRED_SCHEMA = {
 def make_repo() -> tuple[AppConfig, ZentaoRepository]:
     config = AppConfig.from_env()
     return config, ZentaoRepository(ReadOnlyDatabase(config.db))
+
+
+def data_commands() -> set[str]:
+    return {
+        "ask",
+        "bug-boundary",
+        "bug-review",
+        "chat",
+        "check",
+        "daily-report",
+        "demand-status",
+        "dept-risk",
+        "doctor",
+        "measures",
+        "person-tasks",
+        "platform-delay",
+        "query",
+        "schema",
+        "todos",
+        "version-delay",
+        "version-review",
+        "weekly-report",
+        "weekly-summary",
+    }
 
 
 def add_common_date_arg(parser: argparse.ArgumentParser) -> None:
@@ -286,15 +312,18 @@ def env_line(key: str, value: str) -> str:
     return f'{key}="{escaped}"'
 
 
-def cmd_setup(_: argparse.Namespace) -> int:
+def run_setup(*, overwrite: bool | None = None) -> int:
     print("data-zentao 初始化向导")
     print("请按提示一次性输入配置；这些信息只会写入本机 .env，不会提交到 Git。")
     print()
 
     env_path = Path.cwd() / ".env"
     if env_path.exists():
-        overwrite = input(".env 已存在，是否覆盖？输入 yes 继续：").strip().lower()
-        if overwrite not in {"yes", "y"}:
+        should_overwrite = overwrite
+        if should_overwrite is None:
+            answer = input(".env 已存在，是否覆盖？输入 yes 继续：").strip().lower()
+            should_overwrite = answer in {"yes", "y"}
+        if not should_overwrite:
             print("已取消初始化。")
             return 0
 
@@ -306,6 +335,9 @@ def cmd_setup(_: argparse.Namespace) -> int:
 
     if not host or not user or not password or not access_password:
         print("数据库地址、账号、密码、Git访问密码不能为空。", file=sys.stderr)
+        return 1
+    if not port.isdigit():
+        print("数据库端口必须是数字。", file=sys.stderr)
         return 1
 
     startup_hash = hash_password(access_password)
@@ -321,6 +353,13 @@ def cmd_setup(_: argparse.Namespace) -> int:
     )
     env_path.write_text(content, encoding="utf-8")
     env_path.chmod(0o600)
+    os.environ["ZENTAO_DB_HOST"] = host
+    os.environ["ZENTAO_DB_PORT"] = port
+    os.environ["ZENTAO_DB_USER"] = user
+    os.environ["ZENTAO_DB_PASSWORD"] = password
+    os.environ["ZENTAO_DB_NAME"] = "zentao"
+    os.environ["ZENTAO_PLATFORM_PRODUCT_NAME"] = "平台部"
+    os.environ["ZENTAO_PLATFORM_PROJECT_NAME"] = "平台部"
     os.environ["DATA_ZENTAO_START_PASSWORD_SHA256"] = startup_hash
     print(f"已写入本机配置：{env_path}")
 
@@ -341,6 +380,10 @@ def cmd_setup(_: argparse.Namespace) -> int:
     print()
     print("初始化完成。下一步运行：data-zentao check")
     return 0
+
+
+def cmd_setup(_: argparse.Namespace) -> int:
+    return run_setup()
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -1002,6 +1045,83 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def is_config_error(exc: Exception) -> bool:
+    text = str(exc)
+    return "缺少数据库配置" in text or "数据库端口配置错误" in text
+
+
+def is_auth_error(exc: Exception) -> bool:
+    return "访问密码不正确" in str(exc)
+
+
+def is_db_connection_error(exc: Exception) -> bool:
+    if isinstance(exc, OperationalError):
+        return True
+    if isinstance(exc, MySQLError):
+        return True
+    text = str(exc).lower()
+    indicators = [
+        "access denied",
+        "can't connect",
+        "unknown database",
+        "connection refused",
+        "connection timed out",
+        "lost connection",
+    ]
+    return any(item in text for item in indicators)
+
+
+def setup_prompt_available() -> bool:
+    return sys.stdin.isatty()
+
+
+def prompt_yes(message: str) -> bool:
+    try:
+        answer = input(message).strip().lower()
+    except EOFError:
+        return False
+    return answer in {"yes", "y"}
+
+
+def print_setup_hint(reason: str) -> None:
+    print(reason, file=sys.stderr)
+    print("请运行 data-zentao setup，按提示补齐：数据库地址、数据库端口、数据库账号、数据库密码、Git访问密码。", file=sys.stderr)
+
+
+def ensure_config_or_offer_setup() -> bool:
+    try:
+        AppConfig.from_env()
+        return True
+    except Exception as exc:
+        if not is_config_error(exc):
+            raise
+        if setup_prompt_available():
+            print("检测到数据库配置还没完成，现在可以直接补齐。")
+            if prompt_yes("是否现在输入配置？输入 yes 开始："):
+                return run_setup(overwrite=True) == 0
+        print_setup_hint(str(exc))
+        return False
+
+
+def maybe_reconfigure_after_failure(exc: Exception) -> bool:
+    if is_auth_error(exc):
+        reason = "访问密码不正确。"
+    elif is_config_error(exc):
+        reason = str(exc)
+    elif is_db_connection_error(exc):
+        reason = f"数据库连接没有通过：{exc}"
+    else:
+        return False
+
+    if setup_prompt_available():
+        print(reason, file=sys.stderr)
+        if prompt_yes("是否重新输入配置？输入 yes 开始："):
+            return run_setup(overwrite=True) == 0
+
+    print_setup_hint(reason)
+    return False
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -1009,8 +1129,28 @@ def main(argv: list[str] | None = None) -> int:
         local_commands = {"update-check", "setup", "hash-password", "unlock", "lock", "auth-status"}
         if args.command not in local_commands:
             maybe_print_update_notice()
-            ensure_unlocked()
-        return int(args.func(args))
+            if not ensure_config_or_offer_setup():
+                return 1
+            try:
+                ensure_unlocked()
+            except Exception as exc:
+                if maybe_reconfigure_after_failure(exc):
+                    ensure_unlocked()
+                elif is_auth_error(exc) or is_config_error(exc) or is_db_connection_error(exc):
+                    return 1
+                else:
+                    raise
+        try:
+            return int(args.func(args))
+        except Exception as exc:
+            if args.command in data_commands() and maybe_reconfigure_after_failure(exc):
+                ensure_unlocked()
+                return int(args.func(args))
+            if args.command in data_commands() and (
+                is_auth_error(exc) or is_config_error(exc) or is_db_connection_error(exc)
+            ):
+                return 1
+            raise
     except Exception as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 1
